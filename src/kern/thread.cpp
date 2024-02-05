@@ -313,6 +313,12 @@ Thread::bind(Task *t, User_ptr<Utcb> utcb)
   if (_space.space() != Kernel_task::kernel_task())
     return false;
 
+  // Binding a task to a killed thread is not possible. The potentially
+  // non-CPU-local thread state access is synchronized through _space.lock(),
+  // with the unbind() call from Thread::do_kill().
+  if (is_killed(false))
+    return false;
+
   _space.space(t);
   t->inc_ref();
   t->add_bound_thread();
