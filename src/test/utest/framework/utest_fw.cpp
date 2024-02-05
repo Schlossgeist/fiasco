@@ -1168,15 +1168,23 @@ Utest::thread_fn()
 }
 
 /**
- * Kill the current thread.
+ * Kill the current thread (consumes the thread-internal capability reference).
  */
 PUBLIC static
 void
 Utest::kill_current_thread()
 {
   auto guard = lock_guard(cpu_lock);
-  Sched_context::rq.current().deblock(current()->sched(),
-                                      current()->sched());
+
+    {
+      Kobject::Reap_list reap_list;
+      current_thread()->initiate_deletion(reap_list.list());
+      // Reap immediately without RCU.
+      reap_list.del_1();
+      reap_list.del_2();
+    }
+
+  // Execute the leave_and_kill_myself continuation immediately.
   Thread::do_leave_and_kill_myself();
 }
 

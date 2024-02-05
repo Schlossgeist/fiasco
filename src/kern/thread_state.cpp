@@ -45,8 +45,8 @@ enum Thread_state : Mword
 
   /// TCB allocated, but inactive (not in any queue).
   Thread_dead                 = 0x200,
-  /// Thread is about to be killed.
-  Thread_dying                = 0x400,
+  /// Thread was killed, so can never again be started.
+  Thread_killed               = 0x400,
 
   // 0x800 is free
 

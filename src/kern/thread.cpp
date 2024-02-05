@@ -617,7 +617,7 @@ Thread::do_kill()
 
   arch_vcpu_ext_shutdown();
 
-  state_change_dirty(~Thread_dying, Thread_dead);
+  state_add_dirty(Thread_dead);
 
   // dequeue from system queues
   Sched_context::rq.current().ready_dequeue(sched());
@@ -650,15 +650,32 @@ INTERFACE:
 
 IMPLEMENTATION:
 
+/**
+ * \pre Interrupts must be disabled.
+ * \pre Must only be invoked in a context where it is safe to access the
+ *      Thread's state, e.g. on the Thread's home CPU or in a DRQ targeted
+ *      at the Thread.
+ */
 PRIVATE inline
 void
 Thread::prepare_kill()
 {
-  if (state() & (Thread_dying | Thread_dead))
+  if (state() & Thread_killed)
     return;
 
+  // Mark thread as killed to prevent it form being restarted.
+  state_add_dirty(Thread_killed);
+
+  if (state() & Thread_dead) [[unlikely]]
+    {
+      // Thread that was not-yet-started can nevertheless be on an online CPU,
+      // and thus can have DRQs queued, or have IPC senders queued.
+      // Therefore, it must go through to the regular kill procedure.
+      state_del_dirty(Thread_dead);
+    }
+
   inc_ref();
-  state_add_dirty(Thread_dying | Thread_cancel | Thread_ready);
+  state_add_dirty(Thread_cancel | Thread_ready);
   _exc_cont.restore(regs()); // overwrite an already triggered exception
   do_trigger_exception(regs(), reinterpret_cast<void*>(&leave_and_kill_myself));
 }
