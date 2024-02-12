@@ -409,6 +409,7 @@ Thread::~Thread()		// To be called in locked state.
   Fpu_alloc::free_state(fpu_state());
   assert (!(state() & Thread_ready_mask));
   assert (!in_ready_list());
+  assert (!drq_pending());
 }
 
 // IPC-gate deletion stuff ------------------------------------
@@ -660,7 +661,11 @@ Thread::prepare_kill()
   if (state() & Thread_killed)
     return;
 
-  // Mark thread as killed to prevent it form being restarted.
+  // Mark thread as killed to prevent it form being restarted or migrated. Then
+  // allow migration only if not both Thread_dead and Thread_killed are set.
+  // This allows the killed thread to be migrated to an online CPU, where it can
+  // execute Thread::do_kill(). That eventually sets Thread_dead, thus no more
+  // migration will be possible and the thread stays on the invalid CPU.
   state_add_dirty(Thread_killed);
 
   if (state() & Thread_dead) [[unlikely]]
@@ -1128,8 +1133,21 @@ Thread::migrate_away(Migration *inf, bool remote)
   sc->replenish();
   set_sched(sc);
 
-  state_add_dirty(Thread_finish_migration);
-  set_home_cpu(cpu);
+  // Killed thread that reached its final dead state must not be migrated
+  // away from the invalid CPU, because then it could become DRQ ready,
+  // which would be a problem during its deletion. (see also
+  // Thread::force_to_invalid_cpu())
+  bool migration_possible = !is_killed_and_dead();
+
+  // If migrating the thread is not possible, do not change its home CPU
+  // to the requested target CPU. That will cause the migration to fail
+  // in migrate_to().
+  if (migration_possible) [[likely]]
+    {
+      state_add_dirty(Thread_finish_migration);
+      set_home_cpu(cpu);
+    }
+
   write_now(&inf->caller_may_return, true);
   return resched;
 }
@@ -1431,11 +1449,23 @@ Thread::migrate_away(Migration *inf, bool remote)
       assert (!in_ready_list());
       assert (!_pending_rq.queued());
 
-      // The migration must be finished on the new CPU core before executing any
-      // userland code. This will be done by Context::switch_handle_drq() after
-      // the next context switch to this context was performed on the new CPU.
-      state_add_dirty(Thread_finish_migration);
-      set_home_cpu(target_cpu);
+      // Killed thread that reached its final dead state must not be migrated
+      // away from the invalid CPU, because then it could become DRQ ready,
+      // which would be a problem during its deletion. (see also
+      // Thread::force_to_invalid_cpu())
+      bool migration_possible = !is_killed_and_dead();
+
+      // If migrating the thread is not possible, do not change its home CPU
+      // to the requested target CPU. That will cause the migration to fail
+      // in migrate_to().
+      if (migration_possible) [[likely]]
+        {
+          // The migration must be finished on the new CPU core before executing any
+          // userland code. This will be done by Context::switch_handle_drq() after
+          // the next context switch to this context was performed on the new CPU.
+          state_add_dirty(Thread_finish_migration);
+          set_home_cpu(target_cpu);
+        }
       Mem::mp_mb();
       write_now(&inf->caller_may_return, true);
     }

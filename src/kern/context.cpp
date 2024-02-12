@@ -735,6 +735,20 @@ Context::is_invalid(bool check_cpu_local = false) const
 }
 
 /**
+ * Check if the context has been killed, and the kill operation has finished.
+ *
+ * @return true if this context has been killed and reached its final dead
+ *         state, false otherwise.
+ */
+PUBLIC inline NEEDS ["thread_state.h"]
+bool
+Context::is_killed_and_dead(bool check_cpu_local = false) const
+{
+  unsigned s = state(check_cpu_local);
+  return (s & (Thread_dead | Thread_killed)) == (Thread_dead | Thread_killed);
+}
+
+/**
  * Atomically add bits to state flags.
  * @param bits bits to be added to state flags
  */
