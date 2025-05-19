@@ -409,6 +409,7 @@ Thread::~Thread()		// To be called in locked state.
   Fpu_alloc::free_state(fpu_state());
   assert (!(state() & Thread_ready_mask));
   assert (!in_ready_list());
+  assert (sender_list()->empty());
   assert (!drq_pending());
 }
 
@@ -581,6 +582,8 @@ Thread::do_kill()
   reset_reply_cap(Implicit_reply_cap_index);
 
   // If other threads want to send me IPC messages, abort these operations.
+  // Because the `Thread_killed` flag is set, no new IPC messages can be queued,
+  // so after clearing it here the sender list will stay empty.
   {
     while (Sender *s = Sender::cast(sender_list()->first()))
       {
