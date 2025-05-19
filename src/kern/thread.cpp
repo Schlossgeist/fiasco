@@ -665,7 +665,7 @@ IMPLEMENTATION:
  */
 PRIVATE inline
 void
-Thread::prepare_kill()
+Thread::prepare_kill(Cpu_number *migrate_to_cpu)
 {
   if (state() & Thread_killed)
     return;
@@ -683,6 +683,34 @@ Thread::prepare_kill()
       // and thus can have DRQs queued, or have IPC senders queued.
       // Therefore, it must go through to the regular kill procedure.
       state_del_dirty(Thread_dead);
+
+      // To ensure the kill operation eventually completes, we migrate the
+      // killed thread to current CPU if it is on an offline CPU.
+      if (!Cpu::online(home_cpu()))
+        {
+          Migration migration;
+          migration.cpu = current_cpu();
+          // Schedule with same scheduling parameters as the current thread, who
+          // initiated the kill, after all killing the thread is work that needs
+          // to be done on behalf of it.
+          Sched_context::Sp sp;
+          current()->sched()->get(&sp);
+          migration.sp = &sp.p;
+
+          // Thread is on offline CPU, thus it must be different from
+          // current_cpu(), which is online. Since prepare_kill() is executed in
+          // a DRQ, we hold the _pending_rqq lock of the thread's offline home
+          // CPU, as required by migrate_away.
+          migrate_away(&migration, true, true);
+
+          // We must not execute migrate_to() here, while still holding the
+          // _pending_rqq lock of the old home CPU, as migrate_to() takes the
+          // _pending_rqq lock of the target CPU (danger of deadlock) and
+          // potentially even executes DRQs. Thus we execute the migrate_to()
+          // part in `Thread::kill()` outside of DRQ context.
+          assert(migrate_to_cpu != nullptr);
+          *migrate_to_cpu = migration.cpu;
+        }
     }
 
   inc_ref();
@@ -693,9 +721,10 @@ Thread::prepare_kill()
 
 PRIVATE static
 Context::Drq::Result
-Thread::handle_remote_kill(Drq *, Context *self, void *)
+Thread::handle_remote_kill(Drq *, Context *self, void *p)
 {
-  nonull_static_cast<Thread*>(self)->prepare_kill();
+  Cpu_number *migrate_to_cpu = static_cast<Cpu_number *>(p);
+  nonull_static_cast<Thread*>(self)->prepare_kill(migrate_to_cpu);
   return Drq::done();
 }
 
@@ -708,11 +737,16 @@ Thread::kill()
 
   if (home_cpu() == current_cpu())
     {
-      prepare_kill();
+      prepare_kill(nullptr);
       Sched_context::rq.current().deblock(sched(), current()->sched());
     }
   else
-    drq(Thread::handle_remote_kill, nullptr);
+    {
+      Cpu_number migrate_to_cpu = Cpu_number::nil();
+      drq(Thread::handle_remote_kill, &migrate_to_cpu);
+      if (migrate_to_cpu != Cpu_number::nil())
+        migrate_to(migrate_to_cpu);
+    }
 }
 
 
@@ -852,7 +886,7 @@ Reschedule
 Thread::do_migration_not_current(Migration *m)
 {
   Cpu_number target_cpu = access_once(&m->cpu);
-  Reschedule resched = migrate_away(m, false);
+  Reschedule resched = migrate_away(m, false, false);
   resched |= migrate_to(target_cpu);
 
   return resched;
@@ -1105,7 +1139,7 @@ IMPLEMENTATION [!mp]:
 
 PRIVATE inline
 Reschedule
-Thread::migrate_away(Migration *inf, bool remote)
+Thread::migrate_away(Migration *inf, bool remote, bool force)
 {
   assert (current() != this);
   assert (cpu_lock.test());
@@ -1146,7 +1180,10 @@ Thread::migrate_away(Migration *inf, bool remote)
   // away from the invalid CPU, because then it could become DRQ ready,
   // which would be a problem during its deletion. (see also
   // Thread::force_to_invalid_cpu())
-  bool migration_possible = !is_killed_and_dead();
+  // In addition, a thread with a pending kill operation must not be migrated to
+  // an offline CPU, to ensure the operation completes eventually so the thread
+  // can be deleted, thereby preventing resource exhaustion attacks.
+  bool migration_possible = !is_killed() || force;
 
   // If migrating the thread is not possible, do not change its home CPU
   // to the requested target CPU. That will cause the migration to fail
@@ -1387,13 +1424,14 @@ Thread::handle_global_remote_requests_irq()
  *
  * \param remote  False if home CPU is the current CPU.
  *                True if home CPU is the *invalid* CPU or an offline CPU.
+ * \param force   Force migration, even if the thread has Thread_killed set.
  *
  * \retval Reschedule::Yes if a reschedule is necessary.
  * \retval Reschedule::No  if no reschedule is necessary.
  */
 PRIVATE inline
 Reschedule
-Thread::migrate_away(Migration *inf, bool remote)
+Thread::migrate_away(Migration *inf, bool remote, bool force)
 {
   assert(check_for_current_cpu());
   assert(current() != this);
@@ -1462,7 +1500,10 @@ Thread::migrate_away(Migration *inf, bool remote)
       // away from the invalid CPU, because then it could become DRQ ready,
       // which would be a problem during its deletion. (see also
       // Thread::force_to_invalid_cpu())
-      bool migration_possible = !is_killed_and_dead();
+      // In addition, a thread with a pending kill operation must not be migrated to
+      // an offline CPU, to ensure the operation completes eventually so the thread
+      // can be deleted, thereby preventing resource exhaustion attacks.
+      bool migration_possible = !is_killed() || force;
 
       // If migrating the thread is not possible, do not change its home CPU
       // to the requested target CPU. That will cause the migration to fail
@@ -1580,7 +1621,7 @@ Thread::migrate_xcpu(Cpu_number cpu)
           Migration *m = inf.migration();
           Cpu_number target_cpu = access_once(&m->cpu);
           // Dequeue from ready queue with spin lock held!
-          migrate_away(m, true);
+          migrate_away(m, true, false);
           g.reset();
           return migrate_to(target_cpu);
         }
