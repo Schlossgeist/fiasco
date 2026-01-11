@@ -7,7 +7,7 @@ struct Mpu_arm_el1
   static void init()
   {
     // Do not touch region 0. We might execute from it!
-    for (auto i = regions(); i > 1; i--)
+    for (auto i = hardware_regions(); i > 1; i--)
       {
         prselr(i-1);
         Mem::isb();
@@ -15,7 +15,7 @@ struct Mpu_arm_el1
       }
   }
 
-  static Mword regions()
+  static Mword hardware_regions()
   {
     Mword v;
     asm volatile("mrc p15, 0, %0, c0, c0, 4" : "=r"(v)); // MPUIR
@@ -55,7 +55,7 @@ struct Mpu_arm_el1
 
     // Directly skip non-existing regions. We don't support more than 32 regions.
     static_assert(Mem_layout::Mpu_regions <= 32, "No more than 32 regions!");
-    switch (Mpu_arm_el1::regions())
+    switch (Mpu_arm_el1::hardware_regions())
       {
         default:
         case 32: UPDATE(31); [[fallthrough]];
@@ -464,7 +464,7 @@ struct Mpu_arm_el2
     asm volatile("mcr p15, 4, %0, c6, c1, 1" : : "r"(1)); // HPRENR
   }
 
-  static Mword regions()
+  static Mword hardware_regions()
   {
     Mword v;
     asm volatile("mrc p15, 4, %0, c0, c0, 4" : "=r"(v)); // HMPUIR
@@ -848,9 +848,9 @@ Mpu_region::disable()
 
 
 IMPLEMENT static inline
-unsigned Mpu::regions()
+unsigned Mpu::hardware_regions()
 {
-  return Mpu_arm::regions();
+  return Mpu_arm::hardware_regions();
 }
 
 IMPLEMENT static inline

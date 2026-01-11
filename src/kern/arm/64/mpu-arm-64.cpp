@@ -7,14 +7,14 @@ struct Mpu_arm_el1
   static void init()
   {
     // Do not touch region 0. We might execute from it!
-    for (auto i = regions(); i > 1; i--)
+    for (auto i = hardware_regions(); i > 1; i--)
       {
         prselr(i-1);
         prlar(0);
       }
   }
 
-  static Mword regions()
+  static Mword hardware_regions()
   {
     Mword v;
     asm("mrs %0, S3_0_c0_c0_4" : "=r"(v)); // MPUIR_EL1
@@ -215,14 +215,14 @@ struct Mpu_arm_el2
   static void init()
   {
     // Do not touch region 0. We might execute from it!
-    for (auto i = regions(); i > 1; i--)
+    for (auto i = hardware_regions(); i > 1; i--)
       {
         prselr(i-1);
         prlar(0);
       }
   }
 
-  static Mword regions()
+  static Mword hardware_regions()
   {
     Mword v;
     asm("mrs %0, S3_4_c0_c0_4" : "=r"(v)); // MPUIR_EL2
@@ -525,9 +525,9 @@ Mpu_region::disable()
 
 IMPLEMENT static inline
 unsigned
-Mpu::regions()
+Mpu::hardware_regions()
 {
-  return Mpu_arm::regions();
+  return Mpu_arm::hardware_regions();
 }
 
 IMPLEMENT static

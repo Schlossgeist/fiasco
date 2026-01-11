@@ -185,9 +185,9 @@ public:
   static void update(Mpu_regions const &regions);
 
   /**
-   * Get number of supported regions.
+   * Get number of regions supported by the MPU.
    */
-  static unsigned regions();
+  static unsigned hardware_regions();
 };
 
 /**
@@ -240,7 +240,7 @@ public:
    * \param reserved  Map of regions that are not allocatable.
    */
   explicit Mpu_regions(Mpu_regions_mask const &reserved)
-  : _size(Mpu::regions()), _reserved(reserved)
+  : _size(Mpu::hardware_regions()), _reserved(reserved)
   {
     if (_size > Mem_layout::Mpu_regions)
       _size = Mem_layout::Mpu_regions;
