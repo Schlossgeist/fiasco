@@ -335,7 +335,7 @@ Context::save_ext_vcpu_state_mxu(Vm_state * v)
   // Directly skip non-existing regions. Assume multiple of 4 to make use of
   // stm instruction. They really make a difference on the write-through
   // caches of the R52.
-  int idx = Mpu_arm_el1::regions();
+  int idx = Mpu_arm_el1::hardware_regions();
   assert(idx <= 32);
   assert((idx & 0x3) == 0);
 
@@ -394,7 +394,7 @@ Context::load_ext_vcpu_state_mxu(Vm_state const * v)
 
   // Directly skip non-existing regions. Assume multiple of 4 to make use of
   // ldm instruction.
-  int idx = Mpu_arm_el1::regions();
+  int idx = Mpu_arm_el1::hardware_regions();
   assert(idx <= 32);
   assert((idx & 0x3) == 0);
 

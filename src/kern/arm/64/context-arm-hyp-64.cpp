@@ -330,7 +330,7 @@ Context::save_ext_vcpu_state_mpu(Vm_state *v)
   while (false)
 
   // Directly skip non-existing regions.
-  int idx = Mpu_arm_el1::regions() - 1;
+  int idx = Mpu_arm_el1::hardware_regions() - 1;
   assert(idx < 32);
   while (idx >= 0)
     {
@@ -373,7 +373,7 @@ Context::load_ext_vcpu_state_mpu(Vm_state const *v)
   while (false)
 
   // Directly skip non-existing regions.
-  int idx = Mpu_arm_el1::regions() - 1;
+  int idx = Mpu_arm_el1::hardware_regions() - 1;
   assert(idx < 32);
   while (idx >= 0)
     {
