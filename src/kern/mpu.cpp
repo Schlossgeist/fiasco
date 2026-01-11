@@ -9,6 +9,45 @@ INTERFACE [mpu]:
 #include "warn.h"
 
 class Mpu_regions;
+class Mpu_regions_mask;
+
+/**
+ * Interface to the CPUs MPU.
+ */
+class Mpu
+{
+public:
+  /**
+   * Initialize MPU.
+   *
+   * Brings the MPU into a defined state. Called by platform code before any
+   * regions are setup.
+   */
+  static void init();
+
+  /**
+   * Write back changes to hardware.
+   *
+   * \param regions  The Mpu_regions object that was updated.
+   * \param touched  Impacted regions.
+   * \param inplace  Update region directly instead of performing a safe
+   *                 disable-update-enable sequence.
+   */
+  static void sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
+                   bool inplace = false);
+
+  /**
+   * Update MPU with new regions list.
+   *
+   * Write back all `regions` into hardware.
+   */
+  static void update(Mpu_regions const &regions);
+
+  /**
+   * Get number of regions supported by the MPU.
+   */
+  static unsigned hardware_regions();
+};
 
 /**
  * Generic, implementation agnostic MPU region attributes.
@@ -159,44 +198,6 @@ public:
    */
   Error error() const
   { return _updates[0] ? Error_collision : Error_no_mem; }
-};
-
-/**
- * Interface to the CPUs MPU.
- */
-class Mpu
-{
-public:
-  /**
-   * Initialize MPU.
-   *
-   * Brings the MPU into a defined state. Called by platform code before any
-   * regions are setup.
-   */
-  static void init();
-
-  /**
-   * Write back changes to hardware.
-   *
-   * \param regions  The Mpu_regions object that was updated.
-   * \param touched  Impacted regions.
-   * \param inplace  Update region directly instead of performing a safe
-   *                 disable-update-enable sequence.
-   */
-  static void sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
-                   bool inplace = false);
-
-  /**
-   * Update MPU with new regions list.
-   *
-   * Write back all `regions` into hardware.
-   */
-  static void update(Mpu_regions const &regions);
-
-  /**
-   * Get number of regions supported by the MPU.
-   */
-  static unsigned hardware_regions();
 };
 
 /**
