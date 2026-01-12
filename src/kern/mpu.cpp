@@ -142,33 +142,31 @@ public:
  *
  * Additionally, an "error" state is possible if an update failed.
  */
-class Mpu_regions_update
+class Mpu_regions_update : private Mpu_regions_mask
 {
-  // Use an additional error bit.
-  typedef Bitmap<Mem_layout::Mpu_regions + 1> Updates;
-  enum { Error_bit = Mem_layout::Mpu_regions };
-
-  Updates _updates;
+  unsigned char _error_state = 0;
 
 public:
+  // only add up to 8 error cases
   enum Error {
-    Error_no_mem,     ///< Out of regions.
-    Error_collision,  ///< New region collides with existing, incompatible one.
-    Error_max
+    Error_no_err    = 0,
+    // errors are sorted by priority, if there are multiple errors, only the
+    // highest-priority one is returned by Mpu_regions_update::error()
+    Error_no_mem    = 1 << 0, //< Out of regions.
+    Error_collision = 1 << 1, //< New region collides with existing, incompatible one.
   };
-  static_assert(Error_max <= 2, "Can store only two errors");
 
   Mpu_regions_update()
-  { _updates.clear_all(); }
+  : Mpu_regions_mask()
+  {}
 
   /**
    * Construct an error "update".
    */
   explicit Mpu_regions_update(Error error)
+  : Mpu_regions_mask()
   {
-    _updates.clear_all();
-    _updates.set_bit(Error_bit);
-    _updates.bit(0, error == Error_collision);
+    _error_state |= error;
   }
 
   Mpu_regions_update(Mpu_regions_update const &) = default;
@@ -178,7 +176,7 @@ public:
    * Add a region to the update set.
    */
   inline void set_updated(unsigned region)
-  { _updates.set_bit(region); }
+  { set_bit(region); }
 
   /**
    * Combine updates.
@@ -189,7 +187,8 @@ public:
    */
   Mpu_regions_update &operator|=(Mpu_regions_update const &other)
   {
-    _updates |= other._updates;
+    _error_state |= other._error_state;
+    this->Bitmap::operator|=(other);
     return *this;
   }
 
@@ -197,7 +196,7 @@ public:
    * Bool operator testing if update succeeded.
    */
   explicit operator bool() const
-  { return !_updates[Error_bit]; }
+  { return !static_cast<bool>(_error_state); }
 
   /**
    * Fetch update result.
@@ -207,7 +206,7 @@ public:
   Mpu_regions_mask value() const
   {
     Mpu_regions_mask ret;
-    ret = _updates;
+    ret = *this;
     return ret;
   }
 
@@ -215,7 +214,10 @@ public:
    * Returns error code in case update failed.
    */
   Error error() const
-  { return _updates[0] ? Error_collision : Error_no_mem; }
+  {
+    int lsb_set = __builtin_ffs(_error_state) - 1;
+    return lsb_set < 0 ? Error_no_err : static_cast<Error>(1 << lsb_set);
+  }
 };
 
 /**
