@@ -368,6 +368,8 @@ Mpu::init()
 {
   Mpu_arm::init();
   asm volatile ("msr MAIR_EL1, %0" : : "r"(Mpu::Mair_bits));
+
+  _current_number_of_regions = hardware_regions();
 }
 
 //------------------------------------------------------------------
