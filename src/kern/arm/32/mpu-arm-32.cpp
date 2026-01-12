@@ -712,6 +712,8 @@ void Mpu::init()
   Mpu_arm::init();
   asm volatile ("mcr p15, 4, %0, c10, c2, 0" : : "r"(Mpu::Mair0_bits));
   asm volatile ("mcr p15, 4, %0, c10, c2, 1" : : "r"(Mpu::Mair1_bits));
+
+  _current_number_of_regions = hardware_regions();
 }
 
 //------------------------------------------------------------------

@@ -44,10 +44,28 @@ public:
   static void update(Mpu_regions const &regions);
 
   /**
+   * Get the number of virtual regions that the MPUltiplex subsystem is
+   * currently managing.
+   */
+  static unsigned regions()
+  {
+    return _current_number_of_regions;
+  }
+
+  /**
    * Get number of regions supported by the MPU.
    */
   static unsigned hardware_regions();
+private:
+  static unsigned _current_number_of_regions;
 };
+
+IMPLEMENTATION [mpu]:
+
+// set to the actual value reported by the hardware during Mpu::init()
+unsigned Mpu::_current_number_of_regions = 0;
+
+INTERFACE [mpu]:
 
 /**
  * Generic, implementation agnostic MPU region attributes.
@@ -251,10 +269,7 @@ public:
    */
   explicit Mpu_regions(Mpu_regions_mask const &reserved)
   : _size(Mpu::hardware_regions()), _reserved(reserved)
-  {
-    if (_size > Mem_layout::Mpu_regions)
-      _size = Mem_layout::Mpu_regions;
-  }
+  {}
 
   enum class Init { Reserved_regions };
 
