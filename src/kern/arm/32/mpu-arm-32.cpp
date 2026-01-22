@@ -882,7 +882,7 @@ IMPLEMENT static inline
 void
 Mpu::update(Mpu_regions const &regions)
 {
-  Mpu_regions_mask reserved = regions.reserved();
+  Mpu_regions_mask const &reserved = regions.reserved();
 
   // Disable regions that we're updating. Otherwise there is the possibility to
   // have an invalid, colliding region when prbar is updated and the current
