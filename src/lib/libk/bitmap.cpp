@@ -36,6 +36,10 @@ class Bitmap_storage
 {
 public:
   /**
+   * Type of the actual storage that is backing is bitmap.
+   */
+  using Storage_type = STORAGE_TYPE;
+  /**
    * Type of the individual bitmap element.
    */
   using Bitmap_elem_type
