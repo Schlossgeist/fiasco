@@ -297,9 +297,9 @@ public:
   Mpu_region const &operator[](unsigned i) const
   { return _regions[i]; }
 
-  Mpu_regions_mask used()     const { return _used_mask; }
-  Mpu_regions_mask reserved() const { return _reserved; }
-  unsigned         size()     const { return _size; }
+  Mpu_regions_mask const& used()     const { return _used_mask; }
+  Mpu_regions_mask const& reserved() const { return _reserved; }
+  unsigned                size()     const { return _size; }
 
 private:
   unsigned index(Mpu_region const *r) const
