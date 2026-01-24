@@ -2,7 +2,7 @@ INTERFACE [mpu]:
 
 #include <cxx/dlist>
 
-#include "bitmap.h"
+#include "dynamic_bitmap.h"
 #include "l4_fpage.h"
 #include "l4_msg_item.h"
 #include "mem_layout.h"
@@ -62,6 +62,8 @@ public:
    * Get number of regions supported by the MPU.
    */
   static unsigned hardware_regions();
+  static Mpu_allocator allocator;
+
 private:
   static unsigned _current_number_of_regions;
 };
@@ -153,14 +155,15 @@ public:
 /**
  * Bit mask of MPU regions.
  */
-class Mpu_regions_mask : public Bitmap<Mem_layout::Mpu_regions>
+class Mpu_regions_mask : public Dynamic_bitmap<Mpu_allocator>
 {
 public:
-  Mpu_regions_mask()
+  Mpu_regions_mask(unsigned size = Mpu::hardware_regions())
+  : Dynamic_bitmap(size, Mpu::allocator)
   { clear_all(); }
 
   // Required to make it compatible with Mpu_regions_update::Updates
-  using Bitmap<Mem_layout::Mpu_regions>::operator=;
+  using Dynamic_bitmap<Mpu_allocator>::operator=;
 };
 
 /**
@@ -186,15 +189,15 @@ public:
     Error_collision = 1 << 1, //< New region collides with existing, incompatible one.
   };
 
-  Mpu_regions_update()
-  : Mpu_regions_mask()
+  Mpu_regions_update(unsigned size = Mpu::hardware_regions())
+  : Mpu_regions_mask(size)
   {}
 
   /**
    * Construct an error "update".
    */
-  explicit Mpu_regions_update(Error error)
-  : Mpu_regions_mask()
+  explicit Mpu_regions_update(Error error, unsigned size = Mpu::hardware_regions())
+  : Mpu_regions_mask(size)
   {
     _error_state |= error;
   }
@@ -218,7 +221,7 @@ public:
   Mpu_regions_update &operator|=(Mpu_regions_update const &other)
   {
     _error_state |= other._error_state;
-    this->Bitmap::operator|=(other);
+    this->Dynamic_bitmap<Mpu_allocator>::operator|=(other);
     return *this;
   }
 
