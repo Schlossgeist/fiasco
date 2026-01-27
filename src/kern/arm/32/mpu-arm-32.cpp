@@ -890,9 +890,6 @@ Mpu::update(Mpu_regions const &regions)
   Mpu_arm::prenr_mask(*reserved.raw());
   Mem::isb();
 
-  static_assert(reserved.size() <= 32,
-                "HPRENR register only covers <= 32 regions!");
-
 #define UPDATE(i) \
   do \
     { \
