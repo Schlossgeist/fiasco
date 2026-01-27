@@ -52,6 +52,34 @@ public:
   }
 };
 
+/**
+ * A single MPU region.
+ *
+ * Regions are organized as a sorted, double linked, cyclic list. The
+ * architecture extends the struct with the actual data for the hardware. All
+ * addresses are inclusive!
+ */
+struct Mpu_region : public cxx::D_list_item
+{
+  constexpr Mpu_region();
+  Mpu_region(Mword start, Mword end, Mpu_region_attr a);
+
+  constexpr Mword start() const;
+  constexpr Mword end() const;
+  constexpr Mpu_region_attr attr() const;
+
+  inline void start(Mword start);
+  inline void end(Mword end);
+  inline void attr(Mpu_region_attr attr);
+  inline void disable();
+
+  friend bool operator < (Mpu_region const &lhs, Mpu_region const &rhs)
+  { return lhs.end() < rhs.start(); }
+
+  constexpr bool contains(Mword addr) const
+  { return start() <= addr && addr <= end(); }
+};
+
 struct Mpu_allocator
 {
   static void *alloc(size_t size);
@@ -247,34 +275,6 @@ public:
     int lsb_set = __builtin_ffs(_error_state) - 1;
     return lsb_set < 0 ? Error_no_err : static_cast<Error>(1 << lsb_set);
   }
-};
-
-/**
- * A single MPU region.
- *
- * Regions are organized as a sorted, double linked, cyclic list. The
- * architecture extends the struct with the actual data for the hardware. All
- * addresses are inclusive!
- */
-struct Mpu_region : public cxx::D_list_item
-{
-  constexpr Mpu_region();
-  Mpu_region(Mword start, Mword end, Mpu_region_attr a);
-
-  constexpr Mword start() const;
-  constexpr Mword end() const;
-  constexpr Mpu_region_attr attr() const;
-
-  inline void start(Mword start);
-  inline void end(Mword end);
-  inline void attr(Mpu_region_attr attr);
-  inline void disable();
-
-  friend bool operator < (Mpu_region const &lhs, Mpu_region const &rhs)
-  { return lhs.end() < rhs.start(); }
-
-  constexpr bool contains(Mword addr) const
-  { return start() <= addr && addr <= end(); }
 };
 
 /**
