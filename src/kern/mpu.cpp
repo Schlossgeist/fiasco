@@ -8,6 +8,59 @@ INTERFACE [mpu]:
 #include "mem_layout.h"
 #include "warn.h"
 
+/**
+ * Generic, implementation agnostic MPU region attributes.
+ */
+class Mpu_region_attr
+{
+  L4_fpage::Rights _rights;
+  L4_snd_item::Memory_type _type;
+  bool _enabled;
+
+  constexpr Mpu_region_attr(L4_fpage::Rights rights,
+                            L4_snd_item::Memory_type type,
+                            bool enabled)
+  : _rights(rights), _type(type), _enabled(enabled)
+  {}
+
+public:
+  Mpu_region_attr() = default;
+
+  constexpr bool operator == (Mpu_region_attr const &other)
+  {
+    return    _rights  == other._rights
+           && _type    == other._type
+           && _enabled == other._enabled;
+  }
+
+  constexpr bool operator != (Mpu_region_attr const &other)
+  {
+    return !operator==(other);
+  }
+
+  static constexpr Mpu_region_attr
+  make_attr(L4_fpage::Rights rights,
+            L4_snd_item::Memory_type type = L4_snd_item::Memory_type::Normal(),
+            bool enabled = true)
+  {
+    return Mpu_region_attr(rights, type, enabled);
+  }
+
+  constexpr L4_fpage::Rights rights() const { return _rights; }
+  constexpr L4_snd_item::Memory_type type() const { return _type; }
+  constexpr bool enabled() const { return _enabled; }
+
+  inline void add_rights(L4_fpage::Rights rights)
+  {
+    _rights |= rights;
+  }
+
+  inline void del_rights(L4_fpage::Rights rights)
+  {
+    _rights &= ~rights;
+  }
+};
+
 struct Mpu_allocator
 {
   static void *alloc(size_t size);
@@ -98,59 +151,6 @@ Mpu_allocator::operator new (size_t size) noexcept
 }
 
 INTERFACE [mpu]:
-
-/**
- * Generic, implementation agnostic MPU region attributes.
- */
-class Mpu_region_attr
-{
-  L4_fpage::Rights _rights;
-  L4_snd_item::Memory_type _type;
-  bool _enabled;
-
-  constexpr Mpu_region_attr(L4_fpage::Rights rights,
-                            L4_snd_item::Memory_type type,
-                            bool enabled)
-  : _rights(rights), _type(type), _enabled(enabled)
-  {}
-
-public:
-  Mpu_region_attr() = default;
-
-  constexpr bool operator == (Mpu_region_attr const &other)
-  {
-    return    _rights  == other._rights
-           && _type    == other._type
-           && _enabled == other._enabled;
-  }
-
-  constexpr bool operator != (Mpu_region_attr const &other)
-  {
-    return !operator==(other);
-  }
-
-  static constexpr Mpu_region_attr
-  make_attr(L4_fpage::Rights rights,
-            L4_snd_item::Memory_type type = L4_snd_item::Memory_type::Normal(),
-            bool enabled = true)
-  {
-    return Mpu_region_attr(rights, type, enabled);
-  }
-
-  constexpr L4_fpage::Rights rights() const { return _rights; }
-  constexpr L4_snd_item::Memory_type type() const { return _type; }
-  constexpr bool enabled() const { return _enabled; }
-
-  inline void add_rights(L4_fpage::Rights rights)
-  {
-    _rights |= rights;
-  }
-
-  inline void del_rights(L4_fpage::Rights rights)
-  {
-    _rights &= ~rights;
-  }
-};
 
 /**
  * Bit mask of MPU regions.
