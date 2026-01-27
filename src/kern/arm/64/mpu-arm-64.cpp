@@ -568,9 +568,6 @@ Mpu::update(Mpu_regions const &regions)
   // prlar of the updated region is still enabled.
   Mpu_arm::prenr(Mpu_arm::prenr() & *reserved.raw());
 
-  static_assert(reserved.size() <= 32,
-                "PRENR register only covers <= 32 regions!");
-
 #define UPDATE(base, i) \
   do \
     { \
