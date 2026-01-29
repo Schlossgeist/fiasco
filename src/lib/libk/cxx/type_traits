@@ -215,6 +215,12 @@ struct is_enum : integral_constant<bool, __is_enum(T)> {};
 template< typename T >
 inline constexpr bool is_enum_v = is_enum<T>::value;
 
+template<typename T>
+struct is_class : integral_constant<bool, __is_class(T)> {};
+
+template< typename T >
+inline constexpr bool is_class_v = is_class<T>::value;
+
 
 template< typename T > struct is_integral : false_type {};
 
@@ -333,6 +339,43 @@ template<> struct make_unsigned<unsigned long long int> { typedef unsigned long 
 template<> struct make_unsigned<signed long long int>   { typedef unsigned long long int type; };
 template< typename T > using make_unsigned_t = typename make_unsigned<T>::type;
 
+
+template<typename Base, typename Derived>
+struct is_base_of
+{
+private:
+  struct _true { char x[2]; };
+  struct _false {};
+
+  // overload resolution prefers converting to pointer of base
+  // rather than pointer to void
+  template<typename B>
+  static _true _test_ptr_conv(const volatile B*);
+  template<typename>
+  static _false _test_ptr_conv(const volatile void*);
+
+  // support for multiple inheritance via
+  // substitution failure is not an error rule
+  template<typename B, typename D>
+  static decltype(_test_ptr_conv<B>(static_cast<D*>(nullptr))) _test_is_base_of(int);
+  // overload resolution prefers standard conversion over ellipses conversion
+  // use this ellipses trick to ensure this overload is selected last
+  template<typename, typename>
+  static _true _test_is_base_of(...);
+public:
+  enum
+  {
+    value = is_class_v<Base>
+         && is_class_v<Derived>
+         && sizeof(_true) == sizeof(_test_is_base_of<Base, Derived>(0))
+            ? true : false
+  };
+
+  typedef bool value_type;
+};
+
+template<typename Base, typename Derived>
+inline constexpr bool is_base_of_v = is_base_of<Base, Derived>::value;
 
 template<typename From, typename To>
 struct is_convertible
