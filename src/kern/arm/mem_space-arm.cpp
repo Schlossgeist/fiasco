@@ -462,7 +462,7 @@ Mem_space::v_insert([[maybe_unused]] Phys_addr phys,
   // active and the register state is in sync.
   bool const writeback = _current.current() == this && mpu_state_in_sync();
 
-  auto touched = _dir->add(start, end, attr);
+  auto touched = _dir->add(start, end, attr, true, -1, "regular insert");
   if (touched) [[likely]]
     {
       // Usually, at least one region is updated. If not, save us the IPI to
@@ -497,7 +497,7 @@ Mem_space::v_insert([[maybe_unused]] Phys_addr phys,
           Mpu_region_attr old_attr;
           touched = _dir->del(start, end, &old_attr);
           attr.add_rights(old_attr.rights());
-          auto added = _dir->add(start, end, attr);
+          auto added = _dir->add(start, end, attr, true, -1, "hole punch");
           if (!added) [[unlikely]]
             {
               WARN("Mem_space::v_insert(%p): dropped [" L4_MWORD_FMT ":"
@@ -622,7 +622,7 @@ Mem_space::v_delete(Vaddr virt, Page_order order,
     {
       Mpu_region_attr new_attr = attr;
       new_attr.del_rights(rights);
-      auto added = _dir->add(start, end, new_attr);
+      auto added = _dir->add(start, end, new_attr, true, -1, "re-add delete");
       if (!added) [[unlikely]]
         WARN("Mem_space::v_delete(%p): dropped [" L4_MWORD_FMT ":" L4_MWORD_FMT "]\n",
              this, start, end);

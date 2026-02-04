@@ -134,7 +134,7 @@ Kip_init::map_kip(Kip *k)
   diff |= Kmem::kdir->add(reinterpret_cast<Mword>(k),
                           reinterpret_cast<Mword>(k) + 0xfffU,
                           Mpu_region_attr::make_attr(L4_fpage::Rights::URX()),
-                          false, Kpdir::Kip);
+                          false, Kpdir::Kip, "Kip");
 
   if (!diff)
     panic("Cannot map KIP\n");

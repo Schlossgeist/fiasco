@@ -150,7 +150,7 @@ Kmem_alloc::map_heap(unsigned long start, unsigned long end)
   auto touched =
     Kmem::kdir->add(start, end,
                     Mpu_region_attr::make_attr(L4_fpage::Rights::RW()),
-                    false, Kpdir::Kernel_heap);
+                    false, Kpdir::Kernel_heap, "Kernel Heap");
   if (!touched)
     panic("Error creating kernel heap region!\n");
   Mpu::sync(*Kmem::kdir, touched.value());
