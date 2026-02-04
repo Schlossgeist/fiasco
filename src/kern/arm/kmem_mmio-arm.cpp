@@ -18,7 +18,8 @@ Kmem_mmio::map(Address phys, size_t size, Map_attr map_attr)
     Mpu_region_attr::make_attr(L4_fpage::Rights::RW(),
                                map_attr.is_cached()
                                  ? L4_snd_item::Memory_type::Normal()
-                                 : L4_snd_item::Memory_type::Uncached()));
+                                 : L4_snd_item::Memory_type::Uncached()),
+    true, -1, "MMIO");
   assert(diff);
   Mpu::sync(*Kmem::kdir, diff.value());
   Mem::isb();
