@@ -108,4 +108,19 @@ constexpr T bit_ceil(T val)
   return T{1} << bit_width(T{val - 1});
 }
 
+/**
+ * Rounds up to the next power of 2
+ * or returns the input if it already is a power of 2.
+ *
+ * \param val  Number to round up, must be greater than zero.
+ *
+ * \return The binary logarithm of `val`.
+ */
+template<typename T>
+constexpr T
+next_pow2(T val)
+{
+  return 1 << (log2u(val - 1) + 1);
+}
+
 }
