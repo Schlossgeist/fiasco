@@ -81,6 +81,9 @@ public:
     Big_endian = TAG_ENABLED(big_endian),
     Have_mmu = TAG_ENABLED(mmu),
     Have_mpu = !TAG_ENABLED(mmu),
+#ifdef CONFIG_MPULTIPLEX
+    Mpultiplex_block_size = CONFIG_MPULTIPLEX_BLOCK_SIZE,
+#endif
   };
 
   static Cpu_number max_num_cpus() { return Cpu_number(Max_num_cpus); }
