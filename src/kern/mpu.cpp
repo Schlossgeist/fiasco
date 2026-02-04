@@ -336,6 +336,11 @@ public:
   static unsigned regions();
 
   /**
+   * Dump MPU state.
+   */
+  static void dump();
+
+  /**
    * Get number of regions supported by the MPU.
    */
   static unsigned hardware_regions();
@@ -399,6 +404,45 @@ unsigned Mpu::regions()
     ? _virtual_regions.size() : Config::Mpultiplex_block_size;
 }
 
+#include "ansi.h"
+
+IMPLEMENT static
+void Mpu::dump()
+{
+  printf("Cached MPU regions:\n");
+
+  int pad = 2 * sizeof(Mword);
+  printf(ANSI("  %16s - [%*s..%*s, enabled|mem type, rights]@slot\n", BOLD),
+         "label", -pad, "start", pad, "end");
+
+  for (unsigned i = 0; i < _virtual_regions.size(); ++i)
+    {
+      auto const &region = _virtual_regions[i];
+      auto attr = region.attr();
+      //     FORMAT STR         DELIMITER STR
+      printf("  %16s "          ANSI("- [", DIM) ""     // label
+             "" L4_MWORD_FMT "" ANSI("..", DIM) ""      // start
+             "" L4_MWORD_FMT "" ANSI(", ", DIM) ""      // end
+             "%7s"              ANSI("|", DIM) ""       // enabled 
+             "%-8s"             ANSI(",   ", DIM) ""    // type
+             "%cR%c%c"          ANSI("]@", DIM) ""      // rights
+             "%-4u\n",                                  // slot
+             region.label(),
+             region.start(),
+             region.end(),
+             attr.enabled() ? "yes" : "no",
+             (attr.type() == L4_snd_item::Memory_type::Normal())
+                ? "normal"
+                : ((attr.type() == L4_snd_item::Memory_type::Uncached())
+                    ? "uncached" : "buffered"),
+             (attr.rights() & L4_fpage::Rights::U()) ? 'U' : '-',
+             (attr.rights() & L4_fpage::Rights::W()) ? 'W' : '-',
+             (attr.rights() & L4_fpage::Rights::X()) ? 'X' : '-',
+             i);
+    }
+  printf("\n");
+}
+
 INTERFACE [mpu]:
 
 /**
@@ -414,6 +458,18 @@ public:
   Mpu_regions_mask(Bitmap_type const &o)
   : Bitmap_type(o)
   {}
+
+  void dump() const
+  {
+    printf("mask: [");
+    for (unsigned i = 0; i < size(); ++i)
+      {
+        if (i != 0 && i % 8 == 0)
+          printf(" ");
+        printf("%d", (*this)[i] ? 1 : 0);
+      }
+    printf(">\n");
+  }
 
   // Required to make it compatible with Mpu_regions_update::Updates
   using Bitmap_type::operator=;
@@ -858,6 +914,8 @@ Mpu_regions::find_next(Mword addr) const
   return nullptr;
 }
 
+#include "ansi.h"
+
 /**
  * Dump regions list.
  */
@@ -865,24 +923,42 @@ PUBLIC
 void
 Mpu_regions::dump() const
 {
+  printf("[%p] Reserved + used MPU regions:\n", this);
+  Mpu_regions_mask mask;
+  mask |= _used_mask;
+  mask |= _reserved;
+
+  int pad = 2 * sizeof(Mword);
+  printf(ANSI("  %16s - [%*s..%*s, enabled|mem type, rights]@slot - status\n", BOLD),
+         "label", -pad, "start", pad, "end");
+
   unsigned i = 0;
-  printf("Used MPU regions:\n");
-  while (i < _used_mask.size() && (i = _used_mask.ffs(i)))
+  while (i < mask.size() && (i = mask.ffs(i)))
     {
       Mpu_region const &region = (*this)[i - 1];
       auto attr = region.attr();
-      printf("  [" L4_MWORD_FMT ".." L4_MWORD_FMT ", %c%c, %cR%c%c]@%u\n",
+      //     FORMAT STR         DELIMITER STR
+      printf("  %16s "          ANSI("- [", DIM) ""     // label
+             "" L4_MWORD_FMT "" ANSI("..", DIM) ""      // start
+             "" L4_MWORD_FMT "" ANSI(", ", DIM) ""      // end
+             "%7s"              ANSI("|", DIM) ""       // enabled 
+             "%-8s"             ANSI(",   ", DIM) ""    // type
+             "%cR%c%c"          ANSI("]@", DIM) ""      // rights
+             "%-4u"             ANSI(" - ", DIM) ""     // slot
+             "%s\n",                                    // status
+             region.label(),
              region.start(),
              region.end(),
-             attr.enabled() ? '+' : '-',
+             attr.enabled() ? "yes" : "no",
              (attr.type() == L4_snd_item::Memory_type::Normal())
-                ? 'N'
+                ? "normal"
                 : ((attr.type() == L4_snd_item::Memory_type::Uncached())
-                    ? 'U' : 'B'),
+                    ? "uncached" : "buffered"),
              (attr.rights() & L4_fpage::Rights::U()) ? 'U' : '-',
              (attr.rights() & L4_fpage::Rights::W()) ? 'W' : '-',
              (attr.rights() & L4_fpage::Rights::X()) ? 'X' : '-',
-             i);
+             i - 1,
+             _reserved[i] ? "reserved" : "used");
     }
   printf("\n");
 }
