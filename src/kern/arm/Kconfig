@@ -616,6 +616,17 @@ config MPULTIPLEX
 	  memory protection regions by using virtual MPU regions that
 	  are swapping in on demand.
 
+config MPULTIPLEX_BLOCK_SIZE
+	int "Number of MPU regions per block that is allocated"
+	range 8 256
+	default 16
+	depends on MPULTIPLEX
+	help
+	  Defines the size of the blocks that are allocated when more MPU regions
+	  are requested than are currently managed by the MPUltiplex subsystem.
+	  Setting this to a sufficiently high value will effectively minimize the
+	  amount of memory that is dynamically allocated. 
+
 config ARM_FAST_INTERRUPTS
 	bool "Enable low latency interrupt optimization"
 	depends on ARM_V8 && ARM_PROFILE_R && CPU_VIRT && BIT32
