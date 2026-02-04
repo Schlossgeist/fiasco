@@ -65,23 +65,39 @@ public:
  */
 struct Mpu_region_base
 {
+  using Label_buffer = char[16];
+
   constexpr Mpu_region_base();
   Mpu_region_base(Mword start, Mword end, Mpu_region_attr a);
 
   constexpr Mword start() const;
   constexpr Mword end() const;
   constexpr Mpu_region_attr attr() const;
+  constexpr Label_buffer const& label() const
+  { return _label; }
 
   inline void start(Mword start);
   inline void end(Mword end);
   inline void attr(Mpu_region_attr attr);
   inline void disable();
+  inline void label(const char *label)
+  {
+    const int buffer_end = sizeof(Label_buffer) - 1;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
+    __builtin_strncpy(_label, label, buffer_end);
+    _label[buffer_end] = '\0';
+#pragma GCC diagnostic pop
+  }
 
   friend bool operator < (Mpu_region_base const &lhs, Mpu_region_base const &rhs)
   { return lhs.end() < rhs.start(); }
 
   constexpr bool contains(Mword addr) const
   { return start() <= addr && addr <= end(); }
+
+private:
+  Label_buffer _label = {0};
 };
 
 /**
@@ -537,6 +553,7 @@ public:
         r->start(i->start());
         r->end(i->end());
         r->attr(i->attr());
+        r->label(i->label());
       }
   }
 
@@ -634,7 +651,7 @@ IMPLEMENTATION [mpu]:
 PUBLIC inline NEEDS[Mpu_regions::extend, Mpu_regions::find_free]
 Mpu_regions_update
 Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
-                 int slot = -1)
+                 int slot = -1, const char *label = "undefined")
 {
   // Find existing regions left and right of the new region. In case of a
   // collision the existing regions need to be extended and optimized.
@@ -692,7 +709,10 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
 
   // done in case we joined one of the existing regions
   if (r)
-    return updates;
+    {
+      r->label(label);
+      return updates;
+    }
 
   // Could not join an existing region. We need to allocate a new slot.
   r = find_free(slot);
@@ -701,7 +721,7 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
       auto new_size = reserve(size() * 2);
       // WARNX(Info, "MPU regions size extended to %zu\n", new_size);
 
-      return add(start, end, attr, join, slot);
+      return add(start, end, attr, join, slot, label);
     }
 
   r->start(start);
@@ -717,6 +737,7 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
     insert(r, Back, nullptr);
 
   updates.set_updated(index(r));
+  r->label(label);
   return updates;
 }
 

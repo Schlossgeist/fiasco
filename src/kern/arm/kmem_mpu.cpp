@@ -27,7 +27,7 @@ setup_mpu()
   auto diff = kmpu->add(reinterpret_cast<Mword>(_kernel_image_start),
                         reinterpret_cast<Mword>(_initcall_end) - 1U,
                         Mpu_region_attr::make_attr(L4_fpage::Rights::RWX()),
-                        false, Kpdir::Kernel_text);
+                        false, Kpdir::Kernel_text, "Kernel Text");
 
   // Will probably be never seen because UART is not setup yet. :(
   if (!diff)
