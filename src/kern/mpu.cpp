@@ -798,7 +798,7 @@ Mpu_regions::find_free(int slot = -1)
       avail |= _used_mask;
       avail.invert();
       unsigned i = avail.ffs(0);
-      if (i == 0 || i > _size)
+      if (i == 0 || i > size())
         return nullptr;
 
       return &_regions[i - 1];
