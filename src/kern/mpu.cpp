@@ -444,7 +444,7 @@ public:
  * This class does *not* perform checks to verify this invariant. This is the
  * responsibility of the caller.
  */
-class Mpu_regions
+class Mpu_regions : private Mpu_region_block_storage<Mpu_region, Mpu_allocator>
 {
   typedef cxx::D_list<Mpu_region> Region_list;
 
@@ -455,7 +455,7 @@ public:
    * \param reserved  Map of regions that are not allocatable.
    */
   explicit Mpu_regions(Mpu_regions_mask const &reserved)
-  : _size(Mpu::hardware_regions()), _reserved(reserved)
+  : Mpu_region_block_storage(Mpu::hardware_regions(), Mpu::allocator), _reserved(reserved)
   {}
 
   enum class Init { Reserved_regions };
@@ -468,13 +468,13 @@ public:
    * context switches, the used regions of the other object are still copied.
    */
   explicit Mpu_regions(Mpu_regions const &other, Init)
-  : _size(other._size), _reserved(other._reserved)
+  : Mpu_region_block_storage(other.size(), Mpu::allocator), _reserved(other._reserved)
   {
     _reserved |= other._used_mask;
     for (Mpu_region *i : other._used_list)
       {
         unsigned idx = other.index(i);
-        Mpu_region *r = &_regions[idx];
+        Mpu_region *r = &((*this)[idx]);
         r->start(i->start());
         r->end(i->end());
         r->attr(i->attr());
@@ -482,15 +482,16 @@ public:
   }
 
   Mpu_region const &operator[](unsigned i) const
-  { return _regions[i]; }
+  { return Mpu_region_block_storage::operator[](i); }
 
   Mpu_regions_mask const& used()     const { return _used_mask; }
   Mpu_regions_mask const& reserved() const { return _reserved; }
-  unsigned                size()     const { return _size; }
+  unsigned                size()     const
+  { return Mpu_region_block_storage::size(); }
 
 private:
-  unsigned index(Mpu_region const *r) const
-  { return r - _regions; }
+  Mpu_region &operator[](unsigned i)
+  { return Mpu_region_block_storage::operator[](i); }
 
   Mpu_region *deref_iter(Region_list::Iterator iter) const
   { return iter != _used_list.end() ? *iter : nullptr; }
@@ -530,11 +531,9 @@ private:
       _used_list.push_back(r);
   }
 
-  unsigned _size;
   Mpu_regions_mask _reserved;
   Mpu_regions_mask _used_mask;  ///< Bit mask of occupied regions
   Region_list _used_list;       ///< Sorted list (by address) of used regions
-  Mpu_region _regions[Mem_layout::Mpu_regions];
 };
 
 //---------------------------------------------------------------------------
@@ -577,10 +576,10 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
       else if (EXPECT_TRUE(join))
         return extend(i, attr, start, end); // Slow path in case of collisions
       else
-        return Mpu_regions_update(Mpu_regions_update::Error_collision);
+        return Mpu_regions_update(Mpu_regions_update::Error_collision, size());
     }
 
-  Mpu_regions_update updates;
+  Mpu_regions_update updates(size());
   Mpu_region *r = nullptr;
 
   /*
@@ -622,7 +621,7 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
   // Could not join an existing region. We need to allocate a new slot.
   r = find_free(slot);
   if (!r)
-    return Mpu_regions_update(Mpu_regions_update::Error_no_mem);
+    return Mpu_regions_update(Mpu_regions_update::Error_no_mem, size());
 
   r->start(start);
   r->end(end);
@@ -658,7 +657,7 @@ PUBLIC inline NEEDS[Mpu_regions::find_free]
 Mpu_regions_update
 Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
 {
-  Mpu_regions_update updates;
+  Mpu_regions_update updates(size());
 
   Mpu_region *i = front();
 
@@ -768,10 +767,11 @@ Mpu_regions::dump() const
   printf("Used MPU regions:\n");
   while (i < _used_mask.size() && (i = _used_mask.ffs(i)))
     {
-      auto attr = _regions[i - 1].attr();
+      Mpu_region const &region = (*this)[i - 1];
+      auto attr = region.attr();
       printf("  [" L4_MWORD_FMT ".." L4_MWORD_FMT ", %c%c, %cR%c%c]@%u\n",
-             _regions[i - 1].start(),
-             _regions[i - 1].end(),
+             region.start(),
+             region.end(),
              attr.enabled() ? '+' : '-',
              (attr.type() == L4_snd_item::Memory_type::Normal())
                 ? 'N'
@@ -807,13 +807,13 @@ Mpu_regions::find_free(int slot = -1)
       if (i == 0 || i > size())
         return nullptr;
 
-      return &_regions[i - 1];
+      return &(*this)[i - 1];
     }
   else
     {
       if (_used_mask[slot])
         return nullptr;
-      return &_regions[slot];
+      return &(*this)[slot];
     }
 }
 
@@ -838,13 +838,13 @@ Mpu_regions::extend(Mpu_region *first, Mpu_region_attr attr, Mword start,
       if (end < i->start())
         break;
       else if (i->attr() != attr)
-        return Mpu_regions_update(Mpu_regions_update::Error_collision);
+        return Mpu_regions_update(Mpu_regions_update::Error_collision, size());
     }
 
   // The remainder of the function always works on the first overlapping
   // region. We know that all overlapping regions can be coalesced. So once the
   // current region covers [start,end] we're done.
-  Mpu_regions_update updates;
+  Mpu_regions_update updates(size());
   updates.set_updated(index(first));
 
   // Extend to the left? Will possibly merge with compatible adjacent region.
