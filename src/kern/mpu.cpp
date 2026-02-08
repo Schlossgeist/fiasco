@@ -8,6 +8,12 @@ INTERFACE [mpu]:
 #include "mem_layout.h"
 #include "warn.h"
 
+struct Mpu_allocator
+{
+  static void *alloc(size_t size);
+  static void free(size_t size, void *obj);
+};
+
 class Mpu_regions;
 class Mpu_regions_mask;
 
@@ -62,8 +68,32 @@ private:
 
 IMPLEMENTATION [mpu]:
 
+#include "kmem_alloc.h"
+#include "ram_quota.h"
+
 // set to the actual value reported by the hardware during Mpu::init()
 unsigned Mpu::_current_number_of_regions = 0;
+
+IMPLEMENT static inline NEEDS["kmem_alloc.h", "ram_quota.h"]
+void *
+Mpu_allocator::alloc(size_t size)
+{
+  return Kmem_alloc::allocator()->q_alloc(Ram_quota::root.unwrap(), Bytes(size));
+}
+
+IMPLEMENT static inline NEEDS["kmem_alloc.h", "ram_quota.h"]
+void
+Mpu_allocator::free(size_t size, void *obj)
+{
+  Kmem_alloc::allocator()->q_free(Ram_quota::root.unwrap(), Bytes(size), obj);
+}
+
+PUBLIC static inline
+void *
+Mpu_allocator::operator new (size_t size) noexcept
+{
+  return alloc(size);
+}
 
 INTERFACE [mpu]:
 
