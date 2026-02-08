@@ -1,11 +1,15 @@
 INTERFACE [mpu]:
 
 #include <cxx/dlist>
+#include <cxx/type_traits>
 
+#include "arithmetic.h"
+#include "config.h"
 #include "dynamic_bitmap.h"
 #include "l4_fpage.h"
 #include "l4_msg_item.h"
 #include "mem_layout.h"
+#include "panic.h"
 #include "warn.h"
 
 /**
@@ -100,6 +104,140 @@ using Bitmap_type = Dynamic_bitmap<Config::Mpultiplex_block_size, Mpu_allocator>
 
 class Mpu_regions;
 class Mpu_regions_mask;
+
+/**
+ * Base for classes dealing with a growing number of MPU regions.
+ *
+ * Provides the storage as well as means to access stored regions and
+ * reserve space for additional regions.
+ */
+template<class TYPE, typename ALLOC = Mpu_allocator,
+         typename = cxx::enable_if_t<cxx::is_convertible_v<TYPE, Mpu_region_base>>>
+class Mpu_region_block_storage
+{
+public:
+  explicit Mpu_region_block_storage(size_t size = 0)
+  : _size(Config::Mpultiplex_block_size)
+  {
+    if (size > Config::Mpultiplex_block_size)
+      _size = reserve(size);
+  }
+
+  inline unsigned size() const { return _size; }
+
+  TYPE &operator[](unsigned i)
+  {
+    size_t idx = i / regions_per_block();
+    size_t pos = i % regions_per_block();
+
+    // traverse the chain of blocks
+    Mpu_region_block *current_block = &_regions;
+    for (unsigned j = 0; j < idx; ++j)
+      current_block = current_block->next_block;
+
+    return current_block->regions[pos];
+  }
+
+  TYPE const &operator[](unsigned i) const
+  {
+    size_t idx = i / regions_per_block();
+    size_t pos = i % regions_per_block();
+
+    // traverse the chain of blocks
+    Mpu_region_block const *current_block = &_regions;
+    for (unsigned j = 0; j < idx; ++j)
+      current_block = current_block->next_block;
+
+    return current_block->regions[pos];
+  }
+
+  unsigned index(TYPE const *r) const
+  {
+    Mpu_region_block const *current_block = &_regions;
+    unsigned block_index = 0;
+    while (current_block != nullptr)
+      {
+        unsigned i = r - current_block->regions + block_index;
+        if (block_index <= i && i < block_index + regions_per_block())
+          return i;
+
+        current_block = current_block->next_block;
+        block_index += regions_per_block();
+      }
+
+    panic("Searched index of Mpu_region that is not part of this "
+          "Mpu_region_block_storage object.");
+  }
+
+  /**
+   * Reserves space to be able to store more regions.
+   *
+   * \param new_size  The amount to reserve space for.
+   *
+   * \return The amount that space has actually been reserved for.
+   *         May be larger than what was requested.
+   */
+  size_t reserve(size_t new_size)
+  {
+    if (new_size <= size())
+      {
+        WARNX(Info, "Tried to reserve no additional space for this "
+                    "Mpu_region_block_storage object!");
+        return size();
+      }
+
+    // calculate how many new new blocks to allocate
+    unsigned size_diff = new_size - size();
+    unsigned nr_blocks_needed = cxx::div_ceil(size_diff, regions_per_block());
+
+    // find current end of chain of blocks
+    Mpu_region_block *previous_block = &_regions;
+    while (previous_block->next_block != nullptr)
+      previous_block = previous_block->next_block;
+
+    // allocate and connect the chain of new blocks
+    for (unsigned i = 0; i < nr_blocks_needed; ++i)
+      {
+        Mpu_region_block *allocated_block = static_cast<Mpu_region_block *>(
+          _allocator.alloc(sizeof(Mpu_region_block))
+        );
+        new (allocated_block) Mpu_region_block();
+
+        previous_block->next_block = allocated_block;
+        previous_block = allocated_block;
+      }
+
+    _size += nr_blocks_needed * regions_per_block();
+
+    return size();
+  }
+
+private:
+  /**
+   * A block of MPU regions.
+   *
+   * These are allocated on demand when the number of MPU regions the
+   * MPUltiplex subsystem manages exceeds the number of physical MPU regions
+   * supported by the hardware.
+   * Choosing a sufficiently large block size during kernel configuration
+   * effectively eliminates allocations at runtime.
+   */
+  struct Mpu_region_block
+  {
+    TYPE regions[Config::Mpultiplex_block_size];
+    Mpu_region_block *next_block = nullptr;
+  };
+
+  static constexpr unsigned regions_per_block()
+  { return Config::Mpultiplex_block_size; }
+
+  static unsigned blocks_needed_for_nr_regions(unsigned nr_regions)
+  { return cxx::div_ceil(nr_regions, regions_per_block()); }
+
+  unsigned _size;
+  ALLOC _allocator;
+  Mpu_region_block _regions;
+};
 
 /**
  * Interface to the CPUs MPU.
