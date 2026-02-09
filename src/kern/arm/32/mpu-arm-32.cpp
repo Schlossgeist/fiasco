@@ -712,8 +712,6 @@ void Mpu::init()
   Mpu_arm::init();
   asm volatile ("mcr p15, 4, %0, c10, c2, 0" : : "r"(Mpu::Mair0_bits));
   asm volatile ("mcr p15, 4, %0, c10, c2, 1" : : "r"(Mpu::Mair1_bits));
-
-  _current_number_of_regions = hardware_regions();
 }
 
 //------------------------------------------------------------------
@@ -860,6 +858,12 @@ void
 Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
           bool inplace)
 {
+  if (Mpu::mpultiplex_enabled())
+    {
+      if (regions.size() > Mpu::regions())
+        Mpu::expand_virtual_regions(regions.size());
+    }
+
   unsigned i = 0;
   while (i < touched.size() && (i = touched.ffs(i)))
     {
@@ -883,6 +887,12 @@ void
 Mpu::update(Mpu_regions const &regions)
 {
   Mpu_regions_mask const &reserved = regions.reserved();
+
+  if (Mpu::mpultiplex_enabled())
+    {
+      if (regions.size() > Mpu::regions())
+        Mpu::expand_virtual_regions(regions.size());
+    }
 
   // Disable regions that we're updating. Otherwise there is the possibility to
   // have an invalid, colliding region when prbar is updated and the current

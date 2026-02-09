@@ -246,8 +246,25 @@ private:
   Mpu_region_block _regions;
 };
 
+class Backing_storage
+: public IMpu_region_base_container,
+  public Mpu_region_block_storage<Mpu_region_base, Mpu_allocator>
+{
+public:
+  Backing_storage(size_t size = 0)
+  : Mpu_region_block_storage(size) {}
+
+  using Mpu_region_block_storage<Mpu_region_base>::operator[];
+
+  Mpu_region_base const &at(unsigned i) const override
+  { return (*this)[i]; }
+};
+
 /**
  * Interface to the CPUs MPU.
+ * Handles the translation between the virtual MPU regions that the rest
+ * of the kernel works with and the physical MPU hardware with its limited
+ * number of MPU regions.
  */
 class Mpu
 {
@@ -259,6 +276,24 @@ public:
    * regions are setup.
    */
   static void init();
+
+  /**
+   * Initialize the MPUltiplex subsystem for this CPU.
+   *
+   * Constructs the Mpu_region_block_storage that stores all the Mpu_region
+   * object managed by the subsystem.
+   * After calling this, Mpu::mpultiplex_enabled returns 'true' and all calls
+   * to Mpu::sync and Mpu::update are cached.
+   *
+   * \param cpu  The Cpu which is initialized.
+   */
+  static void init_mpultiplex(Cpu_number cpu);
+
+  /**
+   * Returns 'true' after the initialization of the MPUltiplex subsystem
+   * has finished.
+   */
+  static bool mpultiplex_enabled();
 
   /**
    * Write back changes to hardware.
@@ -282,10 +317,7 @@ public:
    * Get the number of virtual regions that the MPUltiplex subsystem is
    * currently managing.
    */
-  static unsigned regions()
-  {
-    return _current_number_of_regions;
-  }
+  static unsigned regions();
 
   /**
    * Get number of regions supported by the MPU.
@@ -293,7 +325,16 @@ public:
   static unsigned hardware_regions();
 
 private:
-  static unsigned _current_number_of_regions;
+// === CACHE MAINTENANCE ======================================================
+
+  /**
+   * Expands the number of virtual regions the MPU is multiplexing.
+   */
+  static void expand_virtual_regions(size_t new_size);
+
+
+  // storage for the data structures used by the MPUltiplex subsystem
+  static Backing_storage _virtual_regions;
 };
 
 IMPLEMENTATION [mpu]:
@@ -301,8 +342,7 @@ IMPLEMENTATION [mpu]:
 #include "kmem_alloc.h"
 #include "ram_quota.h"
 
-// set to the actual value reported by the hardware during Mpu::init()
-unsigned Mpu::_current_number_of_regions = 0;
+Backing_storage Mpu::_virtual_regions = Backing_storage();
 
 IMPLEMENT static inline NEEDS["kmem_alloc.h", "ram_quota.h"]
 void *
@@ -318,11 +358,29 @@ Mpu_allocator::free(size_t size, void *obj)
   Kmem_alloc::allocator()->q_free(Ram_quota::root.unwrap(), Bytes(size), obj);
 }
 
-PUBLIC static inline
-void *
-Mpu_allocator::operator new (size_t size) noexcept
+IMPLEMENT static inline
+void Mpu::init_mpultiplex(Cpu_number cpu)
 {
-  return alloc(size);
+  new (&_virtual_regions) Backing_storage(Mpu::regions());
+}
+
+IMPLEMENT static inline
+bool Mpu::mpultiplex_enabled()
+{
+  return _virtual_regions.size() > 0;
+}
+
+IMPLEMENT static inline
+void Mpu::expand_virtual_regions(size_t new_size)
+{
+  _virtual_regions.reserve(new_size);
+}
+
+IMPLEMENT static inline
+unsigned Mpu::regions()
+{
+  return mpultiplex_enabled()
+    ? _virtual_regions.size() : Config::Mpultiplex_block_size;
 }
 
 INTERFACE [mpu]:
@@ -456,7 +514,7 @@ public:
    * \param reserved  Map of regions that are not allocatable.
    */
   explicit Mpu_regions(Mpu_regions_mask const &reserved)
-  : Mpu_region_block_storage(Mpu::hardware_regions()), _reserved(reserved)
+  : Mpu_region_block_storage(Config::Mpultiplex_block_size), _reserved(reserved)
   {}
 
   enum class Init { Reserved_regions };
@@ -535,6 +593,17 @@ private:
       _used_list.insert_before(r, _used_list.iter(pos));
     else
       _used_list.push_back(r);
+  }
+
+  size_t reserve(size_t new_size)
+  {
+    new_size = Mpu_region_block_storage::reserve(new_size);
+
+    Mpu_regions_mask m(new_size);
+    _reserved |= m;
+    _used_mask |= m;
+
+    return new_size;
   }
 
   Mpu_regions_mask _reserved;
@@ -628,7 +697,12 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
   // Could not join an existing region. We need to allocate a new slot.
   r = find_free(slot);
   if (!r)
-    return Mpu_regions_update(Mpu_regions_update::Error_no_mem, size());
+    {
+      auto new_size = reserve(size() * 2);
+      // WARNX(Info, "MPU regions size extended to %zu\n", new_size);
+
+      return add(start, end, attr, join, slot);
+    }
 
   r->start(start);
   r->end(end);
