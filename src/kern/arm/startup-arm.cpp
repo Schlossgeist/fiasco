@@ -62,6 +62,9 @@ Startup::stage2()
   Kernel_task::init();
   Mem_space::kernel_space(Kernel_task::kernel_task());
   Cpu::cpus.cpu(boot_cpu).init(false, true);
+
+  Mpu::init_mpultiplex(boot_cpu); // needs Kmem_alloc and Per_cpu_data
+
   Pic::init();
   Thread::init_per_cpu(boot_cpu, false);
 
