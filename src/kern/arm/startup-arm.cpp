@@ -73,4 +73,6 @@ Startup::stage2()
   Timer::init(boot_cpu);
   Kip_init::init_kip_clock();
   Utcb_init::init();
+
+  Mpu::init_mpultiplex(); // needs Kmem_alloc
 }
