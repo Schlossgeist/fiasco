@@ -309,14 +309,14 @@ Context::save_ext_vcpu_state_mxu(Vm_state * v)
 #define SAVE_REGIONS(i1, i2, i3, i4) \
   do \
     { \
-      register Mword r0 asm("r0") = Mpu_arm_el1::prbar##i1(); \
-      register Mword r1 asm("r1") = Mpu_arm_el1::prlar##i1(); \
-      register Mword r2 asm("r2") = Mpu_arm_el1::prbar##i2(); \
-      register Mword r3 asm("r3") = Mpu_arm_el1::prlar##i2(); \
-      register Mword r4 asm("r4") = Mpu_arm_el1::prbar##i3(); \
-      register Mword r5 asm("r5") = Mpu_arm_el1::prlar##i3(); \
-      register Mword r6 asm("r6") = Mpu_arm_el1::prbar##i4(); \
-      register Mword r8 asm("r8") = Mpu_arm_el1::prlar##i4(); \
+      register Mword r0 asm("r0") = Mpu_arm_el1::prbar<(i1)>(); \
+      register Mword r1 asm("r1") = Mpu_arm_el1::prlar<(i1)>(); \
+      register Mword r2 asm("r2") = Mpu_arm_el1::prbar<(i2)>(); \
+      register Mword r3 asm("r3") = Mpu_arm_el1::prlar<(i2)>(); \
+      register Mword r4 asm("r4") = Mpu_arm_el1::prbar<(i3)>(); \
+      register Mword r5 asm("r5") = Mpu_arm_el1::prlar<(i3)>(); \
+      register Mword r6 asm("r6") = Mpu_arm_el1::prbar<(i4)>(); \
+      register Mword r8 asm("r8") = Mpu_arm_el1::prlar<(i4)>(); \
       asm volatile ("stm %0!, {r0, r1, r2, r3, r4, r5, r6, r8}" \
         : "=&r"(ctx) \
         : "0"(ctx), \

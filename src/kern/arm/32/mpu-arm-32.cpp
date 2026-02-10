@@ -47,9 +47,8 @@ struct Mpu_arm_el1
     #define UPDATE(i) \
       do \
         { \
-          if constexpr (i < Mem_layout::Mpu_regions) \
-            if (!(mask & (1UL << (i)))) \
-              Mpu_arm_el1::prlar##i(0); \
+          if (!(mask & (1UL << (i)))) \
+            Mpu_arm_el1::prlar<(i)>(0); \
         } \
       while (false)
 
@@ -96,135 +95,17 @@ struct Mpu_arm_el1
     #undef UPDATE
   }
 
-  static Mword prbar0()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c8, 0" : "=r"(v)); return v; }
-  static Mword prbar1()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c8, 4" : "=r"(v)); return v; }
-  static Mword prbar2()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c9, 0" : "=r"(v)); return v; }
-  static Mword prbar3()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c9, 4" : "=r"(v)); return v; }
-  static Mword prbar4()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c10, 0" : "=r"(v)); return v; }
-  static Mword prbar5()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c10, 4" : "=r"(v)); return v; }
-  static Mword prbar6()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c11, 0" : "=r"(v)); return v; }
-  static Mword prbar7()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c11, 4" : "=r"(v)); return v; }
-  static Mword prbar8()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c12, 0" : "=r"(v)); return v; }
-  static Mword prbar9()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c12, 4" : "=r"(v)); return v; }
-  static Mword prbar10()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c13, 0" : "=r"(v)); return v; }
-  static Mword prbar11()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c13, 4" : "=r"(v)); return v; }
-  static Mword prbar12()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c14, 0" : "=r"(v)); return v; }
-  static Mword prbar13()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c14, 4" : "=r"(v)); return v; }
-  static Mword prbar14()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c15, 0" : "=r"(v)); return v; }
-  static Mword prbar15()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c15, 4" : "=r"(v)); return v; }
-  static Mword prbar16()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c8, 0" : "=r"(v)); return v; }
-  static Mword prbar17()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c8, 4" : "=r"(v)); return v; }
-  static Mword prbar18()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c9, 0" : "=r"(v)); return v; }
-  static Mword prbar19()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c9, 4" : "=r"(v)); return v; }
-  static Mword prbar20()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c10, 0" : "=r"(v)); return v; }
-  static Mword prbar21()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c10, 4" : "=r"(v)); return v; }
-  static Mword prbar22()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c11, 0" : "=r"(v)); return v; }
-  static Mword prbar23()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c11, 4" : "=r"(v)); return v; }
-  static Mword prbar24()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c12, 0" : "=r"(v)); return v; }
-  static Mword prbar25()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c12, 4" : "=r"(v)); return v; }
-  static Mword prbar26()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c13, 0" : "=r"(v)); return v; }
-  static Mword prbar27()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c13, 4" : "=r"(v)); return v; }
-  static Mword prbar28()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c14, 0" : "=r"(v)); return v; }
-  static Mword prbar29()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c14, 4" : "=r"(v)); return v; }
-  static Mword prbar30()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c15, 0" : "=r"(v)); return v; }
-  static Mword prbar31()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c15, 4" : "=r"(v)); return v; }
-
-  static Mword prlar0()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c8, 1" : "=r"(v)); return v; }
-  static Mword prlar1()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c8, 5" : "=r"(v)); return v; }
-  static Mword prlar2()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c9, 1" : "=r"(v)); return v; }
-  static Mword prlar3()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c9, 5" : "=r"(v)); return v; }
-  static Mword prlar4()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c10, 1" : "=r"(v)); return v; }
-  static Mword prlar5()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c10, 5" : "=r"(v)); return v; }
-  static Mword prlar6()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c11, 1" : "=r"(v)); return v; }
-  static Mword prlar7()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c11, 5" : "=r"(v)); return v; }
-  static Mword prlar8()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c12, 1" : "=r"(v)); return v; }
-  static Mword prlar9()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c12, 5" : "=r"(v)); return v; }
-  static Mword prlar10()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c13, 1" : "=r"(v)); return v; }
-  static Mword prlar11()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c13, 5" : "=r"(v)); return v; }
-  static Mword prlar12()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c14, 1" : "=r"(v)); return v; }
-  static Mword prlar13()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c14, 5" : "=r"(v)); return v; }
-  static Mword prlar14()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c15, 1" : "=r"(v)); return v; }
-  static Mword prlar15()
-  { Mword v; asm volatile ("mrc p15, 0, %0, c6, c15, 5" : "=r"(v)); return v; }
-  static Mword prlar16()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c8, 1" : "=r"(v)); return v; }
-  static Mword prlar17()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c8, 5" : "=r"(v)); return v; }
-  static Mword prlar18()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c9, 1" : "=r"(v)); return v; }
-  static Mword prlar19()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c9, 5" : "=r"(v)); return v; }
-  static Mword prlar20()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c10, 1" : "=r"(v)); return v; }
-  static Mword prlar21()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c10, 5" : "=r"(v)); return v; }
-  static Mword prlar22()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c11, 1" : "=r"(v)); return v; }
-  static Mword prlar23()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c11, 5" : "=r"(v)); return v; }
-  static Mword prlar24()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c12, 1" : "=r"(v)); return v; }
-  static Mword prlar25()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c12, 5" : "=r"(v)); return v; }
-  static Mword prlar26()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c13, 1" : "=r"(v)); return v; }
-  static Mword prlar27()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c13, 5" : "=r"(v)); return v; }
-  static Mword prlar28()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c14, 1" : "=r"(v)); return v; }
-  static Mword prlar29()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c14, 5" : "=r"(v)); return v; }
-  static Mword prlar30()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c15, 1" : "=r"(v)); return v; }
-  static Mword prlar31()
-  { Mword v; asm volatile ("mrc p15, 1, %0, c6, c15, 5" : "=r"(v)); return v; }
+  template<unsigned I>
+  static Mword prbar()
+  {
+    Mword v;
+    asm volatile("mcr p15, %c1, %0, c6, c%c2, %c3"
+                 : "=r"(v)
+                 : "i"(0 + (I / 16)),
+                   "i"(8 + (I / 2) % 8),
+                   "i"(0 + (I % 2) * 4));
+    return v;
+  }
 
   template<unsigned I>
   static void prxar(Mword b, Mword l)
@@ -243,70 +124,29 @@ struct Mpu_arm_el1
 
   // We need dedicated PRLARx access for prenr_mask()
 
-  static void prlar0(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6,  c8, 1" : : "r"(v)); }
-  static void prlar1(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6 , c8, 5" : : "r"(v)); }
-  static void prlar2(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6,  c9, 1" : : "r"(v)); }
-  static void prlar3(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6,  c9, 5" : : "r"(v)); }
-  static void prlar4(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6, c10, 1" : : "r"(v)); }
-  static void prlar5(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6, c10, 5" : : "r"(v)); }
-  static void prlar6(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6, c11, 1" : : "r"(v)); }
-  static void prlar7(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6, c11, 5" : : "r"(v)); }
-  static void prlar8(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6, c12, 1" : : "r"(v)); }
-  static void prlar9(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6, c12, 5" : : "r"(v)); }
-  static void prlar10(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6, c13, 1" : : "r"(v)); }
-  static void prlar11(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6, c13, 5" : : "r"(v)); }
-  static void prlar12(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6, c14, 1" : : "r"(v)); }
-  static void prlar13(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6, c14, 5" : : "r"(v)); }
-  static void prlar14(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6, c15, 1" : : "r"(v)); }
-  static void prlar15(Mword v)
-  { asm volatile("mcr p15, 0, %0, c6, c15, 5" : : "r"(v)); }
-  static void prlar16(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6,  c8, 1" : : "r"(v)); }
-  static void prlar17(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6,  c8, 5" : : "r"(v)); }
-  static void prlar18(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6,  c9, 1" : : "r"(v)); }
-  static void prlar19(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6,  c9, 5" : : "r"(v)); }
-  static void prlar20(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6, c10, 1" : : "r"(v)); }
-  static void prlar21(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6, c10, 5" : : "r"(v)); }
-  static void prlar22(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6, c11, 1" : : "r"(v)); }
-  static void prlar23(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6, c11, 5" : : "r"(v)); }
-  static void prlar24(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6, c12, 1" : : "r"(v)); }
-  static void prlar25(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6, c12, 5" : : "r"(v)); }
-  static void prlar26(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6, c13, 1" : : "r"(v)); }
-  static void prlar27(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6, c13, 5" : : "r"(v)); }
-  static void prlar28(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6, c14, 1" : : "r"(v)); }
-  static void prlar29(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6, c14, 5" : : "r"(v)); }
-  static void prlar30(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6, c15, 1" : : "r"(v)); }
-  static void prlar31(Mword v)
-  { asm volatile("mcr p15, 1, %0, c6, c15, 5" : : "r"(v)); }
+  template<unsigned I>
+  static void prlar(Mword v)
+  {
+    if constexpr (I < Mem_layout::Mpu_regions)
+      asm volatile("mcr p15, %c1, %0, c6, c%c2, %c3"
+                   : // no output
+                   : "r"(v),
+                     "i"(0 + (I / 16)),
+                     "i"(8 + (I / 2) % 8),
+                     "i"(1 + (I % 2) * 4));
+  }
+
+  template<unsigned I>
+  static Mword prlar()
+  {
+    Mword v;
+    asm volatile("mcr p15, %c1, %0, c6, c%c2, %c3"
+                 : "=r"(v)
+                 : "i"(0 + (I / 16)),
+                   "i"(8 + (I / 2) % 8),
+                   "i"(1 + (I % 2) * 4));
+    return v;
+  }
 };
 
 struct Mpu_arm_el2
