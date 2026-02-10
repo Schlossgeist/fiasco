@@ -150,6 +150,7 @@ public:
 
   TYPE &operator[](unsigned i)
   {
+    precondition(i < size());
     size_t idx = i / regions_per_block();
     size_t pos = i % regions_per_block();
 
@@ -163,6 +164,7 @@ public:
 
   TYPE const &operator[](unsigned i) const
   {
+    precondition(i < size());
     size_t idx = i / regions_per_block();
     size_t pos = i % regions_per_block();
 
@@ -233,6 +235,20 @@ public:
     _size += nr_blocks_needed * regions_per_block();
 
     return size();
+  }
+
+  void clear()
+  {
+    Mpu_region_block *current_block = &_regions;
+    while (current_block != nullptr)
+      {
+        Mpu_region_block *next_block = current_block->next_block;
+
+        new (current_block) Mpu_region_block();
+
+        current_block->next_block = next_block;
+        current_block = current_block->next_block;
+      }
   }
 
 private:
@@ -353,7 +369,13 @@ private:
    */
   static void expand_virtual_regions(size_t new_size);
 
+  /**
+   * Reset to initial state.
+   */
+  static void flush_cache();
 
+  // bitmask of cached regions that are currently active in the physical MPU
+  static Mpu_regions_mask _active_regions;
   // storage for the data structures used by the MPUltiplex subsystem
   static Backing_storage _virtual_regions;
 };
@@ -363,6 +385,7 @@ IMPLEMENTATION [mpu]:
 #include "kmem_alloc.h"
 #include "ram_quota.h"
 
+Mpu_regions_mask Mpu::_active_regions;
 Backing_storage Mpu::_virtual_regions = Backing_storage();
 
 IMPLEMENT static inline NEEDS["kmem_alloc.h", "ram_quota.h"]
@@ -382,6 +405,7 @@ Mpu_allocator::free(size_t size, void *obj)
 IMPLEMENT static inline
 void Mpu::init_mpultiplex(Cpu_number cpu)
 {
+  new (&_active_regions) Mpu_regions_mask(Mpu::regions());
   new (&_virtual_regions) Backing_storage(Mpu::regions());
 }
 
@@ -394,10 +418,19 @@ bool Mpu::mpultiplex_enabled()
 IMPLEMENT static inline
 void Mpu::expand_virtual_regions(size_t new_size)
 {
+  Mpu_regions_mask m(new_size);
+  _active_regions |= m;
   _virtual_regions.reserve(new_size);
 
   INFO("MPUltiplex regions cache size extended to %zu\n", new_size);
   Mpu::dump();
+}
+
+IMPLEMENT static inline
+void Mpu::flush_cache()
+{
+  _active_regions.clear_all();
+  _virtual_regions.clear();
 }
 
 IMPLEMENT static inline
@@ -412,10 +445,10 @@ unsigned Mpu::regions()
 IMPLEMENT static
 void Mpu::dump()
 {
-  printf("Cached MPU regions:\n");
+  printf("Cached + active MPU regions:\n");
 
   int pad = 2 * sizeof(Mword);
-  printf(ANSI("  %16s - [%*s..%*s, enabled|mem type, rights]@slot\n", BOLD),
+  printf(ANSI("  %16s - [%*s..%*s, enabled|mem type, rights]@slot - multiplex state\n", BOLD),
          "label", -pad, "start", pad, "end");
 
   for (unsigned i = 0; i < _virtual_regions.size(); ++i)
@@ -429,7 +462,8 @@ void Mpu::dump()
                   "%7s"              ANSI("|", DIM) ""       // enabled 
                   "%-8s"             ANSI(",   ", DIM) ""    // type
                   "%cR%c%c"          ANSI("]@", DIM) ""      // rights
-                  "%-4u\n",                                  // slot
+                  "%-4u"             ANSI(" - ", DIM) ""     // slot
+                  "%s\n",                                    // multiplex status
                   region.label(),
                   region.start(),
                   region.end(),
@@ -441,7 +475,8 @@ void Mpu::dump()
                   (attr.rights() & L4_fpage::Rights::U()) ? 'U' : '-',
                   (attr.rights() & L4_fpage::Rights::W()) ? 'W' : '-',
                   (attr.rights() & L4_fpage::Rights::X()) ? 'X' : '-',
-                  i);
+                  i,
+                  _active_regions[i] ? "active" : "cached");
     }
   printf("\n");
 }

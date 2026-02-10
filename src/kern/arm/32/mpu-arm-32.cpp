@@ -873,6 +873,13 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
   unsigned i = 0;
   while (i < touched.size() && (i = touched.ffs(i)))
     {
+      if (mpultiplex_enabled())
+        {
+          Mpu_region_base const &r = regions[i - 1];
+          _virtual_regions[i - 1] = r;
+          _virtual_regions[i - 1].label(r.label());
+        }
+
       Mpu_arm::prselr(i - 1);
       Mem::isb();
       if (!inplace && (Mpu_arm::prlar() & Mpu_region_base::Enabled))
@@ -913,6 +920,15 @@ Mpu::update(Mpu_regions const &regions)
     {
       if (regions.size() > Mpu::regions())
         Mpu::expand_virtual_regions(regions.size());
+
+      Mpu::flush_cache();
+
+      for (unsigned i = 0; i < regions.size(); ++i)
+        {
+          Mpu_region_base const &r = regions[i];
+          _virtual_regions[i] = r;
+          _virtual_regions[i].label(r.label());
+        }
     }
 
   // Disable regions that we're updating. Otherwise there is the possibility to
