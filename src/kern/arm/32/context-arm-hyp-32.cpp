@@ -385,10 +385,10 @@ Context::load_ext_vcpu_state_mxu(Vm_state const * v)
           "=r"(r8) \
         : "0"(ctx) \
         : "memory"); \
-      Mpu_arm_el1::prxar##i1(r0, r1); \
-      Mpu_arm_el1::prxar##i2(r2, r3); \
-      Mpu_arm_el1::prxar##i3(r4, r5); \
-      Mpu_arm_el1::prxar##i4(r6, r8); \
+      Mpu_arm_el1::prxar<(i1)>(r0, r1); \
+      Mpu_arm_el1::prxar<(i2)>(r2, r3); \
+      Mpu_arm_el1::prxar<(i3)>(r4, r5); \
+      Mpu_arm_el1::prxar<(i4)>(r6, r8); \
     } \
   while (false)
 
