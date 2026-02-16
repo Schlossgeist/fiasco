@@ -119,6 +119,29 @@ private:
 };
 
 /**
+ * A single MPU region stored inside the MPUltiplex cache.
+ */
+struct Cached_mpu_region : public Mpu_region_base
+{
+  using Mpu_region_base::Mpu_region_base;
+
+  Cached_mpu_region(Mpu_region_base const &other, int slot = -1)
+  : Mpu_region_base(other), _physical_slot(slot) {}
+
+  constexpr bool is_active() const
+  { return slot() >= 0 ;}
+
+  constexpr int slot() const
+  { return _physical_slot; }
+
+  inline void slot(int slot)
+  { _physical_slot = slot; }
+
+private:
+  int _physical_slot = -1;
+};
+
+/**
  * A single MPU region.
  *
  * Regions are organized as a sorted, double linked, cyclic list.
@@ -320,6 +343,11 @@ public:
    */
   static void expand_virtual_regions(size_t new_size);
 
+  static bool check_and_handle_multiplex_fault(Mword address);
+
+  static void swap(unsigned victim_slot, Cached_mpu_region const &region,
+                   bool inplace = false);
+
   /**
    * Reset to initial state.
    */
@@ -361,7 +389,7 @@ public:
   static Mpu_allocator allocator;
 
   using Backing_storage
-    = Mpu_region_block_storage<Mpu_region_base, Mpu_allocator>;
+    = Mpu_region_block_storage<Cached_mpu_region, Mpu_allocator>;
 
 private:
   // bitmask of cached regions that are currently active in the physical MPU
@@ -373,6 +401,8 @@ private:
 };
 
 IMPLEMENTATION [mpu]:
+
+#include <cstdlib>
 
 #include "kmem_alloc.h"
 #include "ram_quota.h"
@@ -423,6 +453,59 @@ void Mpu::expand_virtual_regions(size_t new_size)
   Mpu::dump();
 }
 
+IMPLEMENT static inline NEEDS[<cstdlib>]
+bool Mpu::check_and_handle_multiplex_fault(Mword address)
+{
+  int swap_in_slot = -1;
+  int swap_out_slot = -1;
+  for (unsigned i = 0; i < _virtual_regions.size(); ++i)
+    if (_virtual_regions[i].contains(address))
+      {
+        if (!_active_regions[i])
+          {
+            // region is cached, but inactive -> swap it in
+            swap_in_slot = i;
+            break;
+          }
+        else
+          return false; // region is cached and active -> bail out
+      }
+
+  // not a multiplex fault; bail out
+  if (swap_in_slot < 0) return false;
+
+  Mpu_regions_mask available_regions = _active_regions;
+  available_regions &= ~_pinned_regions;
+
+  while (swap_out_slot = rand() % regions(), !available_regions[swap_out_slot])
+    ; // empty statement
+
+  Cached_mpu_region &swap_in_region = _virtual_regions[swap_in_slot];
+  Cached_mpu_region &swap_out_region = _virtual_regions[swap_out_slot];
+
+  const int hardware_slot = swap_out_region.slot();
+  invariant(3 < hardware_slot);
+  invariant(static_cast<unsigned>(hardware_slot) < hardware_regions());
+
+  INFO("Swapped region in slot %d [" L4_MWORD_FMT ".." L4_MWORD_FMT "]\n\t"
+       "for region in slot %d [" L4_MWORD_FMT ".." L4_MWORD_FMT "]\n\t"
+       "via hardware slot %d.\n",
+       swap_out_slot, swap_out_region.start(), swap_out_region.end(),
+       swap_in_slot, swap_in_region.start(), swap_in_region.end(),
+       hardware_slot);
+
+  Mpu::swap(hardware_slot, swap_in_region);
+
+  _active_regions.clear_bit(swap_out_slot);
+  _active_regions.set_bit(swap_in_slot);
+  swap_out_region.slot(-1);
+  swap_in_region.slot(hardware_slot);
+
+  Mpu::dump();
+
+  return true;
+}
+
 IMPLEMENT static inline
 void Mpu::flush_cache()
 {
@@ -446,7 +529,7 @@ void Mpu::dump()
   printf("Cached + active MPU regions:\n");
 
   int pad = 2 * sizeof(Mword);
-  printf(ANSI("  %16s - [%*s..%*s, enabled|mem type, rights]@slot - multiplex state\n", BOLD),
+  printf(ANSI("  %16s - [%*s..%*s, enabled|mem type, rights]@slot[in hw] - multiplex state\n", BOLD),
          "label", -pad, "start", pad, "end");
 
   for (unsigned i = 0; i < _virtual_regions.size(); ++i)
@@ -460,7 +543,8 @@ void Mpu::dump()
                   "%7s"              ANSI("|", DIM) ""       // enabled 
                   "%-8s"             ANSI(",   ", DIM) ""    // type
                   "%cR%c%c"          ANSI("]@", DIM) ""      // rights
-                  "%-4u"             ANSI(" - ", DIM) ""     // slot
+                  "%-4u"             ANSI("[", DIM) ""       // slot
+                  "%5d"              ANSI("] - ", DIM) ""    // hardware slot
                   "%s, %s\n",                                // multiplex state
                   region.label(),
                   region.start(),
@@ -473,7 +557,7 @@ void Mpu::dump()
                   (attr.rights() & L4_fpage::Rights::U()) ? 'U' : '-',
                   (attr.rights() & L4_fpage::Rights::W()) ? 'W' : '-',
                   (attr.rights() & L4_fpage::Rights::X()) ? 'X' : '-',
-                  i,
+                  i, region.slot(),
                   _active_regions[i] ? "active" : "cached",
                   _pinned_regions[i] ? "pinned" : "");
     }

@@ -200,6 +200,9 @@ extern "C" {
     if (EXPECT_FALSE(Thread::is_debug_exception_fsr(error_code)))
       return 0;
 
+    if (EXPECT_FALSE(Mpu::check_and_handle_multiplex_fault(pfa)))
+      return 1;
+
     Thread *t = current_thread();
 
     if (EXPECT_FALSE(t->check_and_handle_mem_op_fault(error_code, ret_frame)))
