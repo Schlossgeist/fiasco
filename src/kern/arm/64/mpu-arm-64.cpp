@@ -443,6 +443,8 @@ public:
 //------------------------------------------------------------------
 IMPLEMENTATION [arm && 64bit && mpu && arm_v8]:
 
+#include "minmax.h"
+
 IMPLEMENT constexpr
 Mpu_region_base::Mpu_region_base()
 : prbar(~0x3fUL), prlar(0)
@@ -562,19 +564,34 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
           Mpu_region_base const &r = regions[i - 1];
           _virtual_regions[i - 1] = r;
           _virtual_regions[i - 1].label(r.label());
+
+          _active_regions.clear_bit(i - 1);
+
+          if (r.attr().pinned())
+            _pinned_regions.set_bit(i - 1);
         }
 
-      Mpu_arm::prselr(i - 1);
-      if (!inplace && (Mpu_arm::prlar() & Mpu_region_base::Enabled))
+      if (i - 1 < Mpu::hardware_regions())
         {
-          // Always disable first! Otherwise a colliding region might exist
-          // briefly after writing prbar!
-          Mpu_arm::prlar(0);
-          Mem::isb();
-        }
+          Mpu_arm::prselr(i - 1);
+          if (!inplace && (Mpu_arm::prlar() & Mpu_region_base::Enabled))
+            {
+              // Always disable first! Otherwise a colliding region might exist
+              // briefly after writing prbar!
+              Mpu_arm::prlar(0);
+              Mem::isb();
+            }
 
-      Mpu_arm::prbar(regions[i - 1].prbar);
-      Mpu_arm::prlar(regions[i - 1].prlar);
+          Mpu_arm::prbar(regions[i - 1].prbar);
+          Mpu_arm::prlar(regions[i - 1].prlar);
+
+          if (mpultiplex_enabled())
+            {
+              _virtual_regions[i - 1].slot(i - 1);
+              _active_regions.set_bit(i - 1);
+            }
+          invariant(hardware_regions() >= _active_regions.popcount());
+        }
     }
 
   // PRSELR must be 0 because it's assumed by kernel entry/exit code!
@@ -588,6 +605,27 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
       touched.dump();
       Mpu::dump();
     }
+}
+
+IMPLEMENT static inline
+void
+Mpu::swap(unsigned victim_slot, Cached_mpu_region const &region, bool inplace)
+{
+  Mpu_arm::prselr(victim_slot);
+  Mem::isb();
+  if (!inplace && (Mpu_arm::prlar() & Cached_mpu_region::Enabled))
+    {
+      // Always disable first! Otherwise a colliding region might
+      // exist briefly after writing prbar!
+      Mpu_arm::prlar(0);
+      Mem::isb();
+    }
+
+  Mpu_arm::prbar(region.prbar);
+  Mpu_arm::prlar(region.prlar);
+
+  // PRSELR must be 0 because it's assumed by kernel entry/exit code!
+  Mpu_arm::prselr(0);
 }
 
 IMPLEMENT static
@@ -614,6 +652,9 @@ Mpu::update(Mpu_regions const &regions)
           Mpu_region_base const &r = regions[i];
           _virtual_regions[i] = r;
           _virtual_regions[i].label(r.label());
+
+          if (r.attr().pinned())
+            _pinned_regions.set_bit(i);
         }
     }
 
@@ -622,18 +663,28 @@ Mpu::update(Mpu_regions const &regions)
   // prlar of the updated region is still enabled.
   Mpu_arm::prenr(Mpu_arm::prenr() & *reserved.raw());
 
-#define UPDATE(base, i) \
-  do \
-    { \
-      if constexpr (((base) + (i)) < Mem_layout::Mpu_regions) \
-        Mpu_arm::prxar##i(regions[(base) + (i)].prbar, \
-                          regions[(base) + (i)].prlar); \
-    } \
+  IMpu_region_base_container const *actual_regions = &regions;
+  if (Mpu::mpultiplex_enabled())
+    actual_regions = &_virtual_regions;
+
+#define UPDATE(base, i)                                            \
+  do                                                               \
+    {                                                              \
+      if constexpr (((base) + (i)) < Mem_layout::Mpu_regions)      \
+        Mpu_arm::prxar##i(actual_regions->at((base) + (i)).prbar,  \
+                          actual_regions->at((base) + (i)).prlar); \
+    }                                                              \
   while (false)
+
+  unsigned real_size = min(hardware_regions(), regions.size());
+  _active_regions.set_first_bits(real_size);
+
+  for (unsigned i = 0; i < real_size; ++i)
+    _virtual_regions[i].slot(i);
 
   // We don't support more than 32 regions. Between 17 and 32 regions we have
   // to switch banks.
-  int idx = regions.size() - 1;
+  int idx = real_size - 1;
   if (idx > 15 && Mem_layout::Mpu_regions > 16) [[likely]]
     {
       // There is an ISB in Mpu_arm::prselr() below that synchronizes the above

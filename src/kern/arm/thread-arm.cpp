@@ -209,6 +209,9 @@ Thread::pagefault_entry(const Mword pfa, Mword error_code,
   if (Thread::is_debug_exception_fsr(error_code)) [[unlikely]]
     return 0;
 
+  if (Mpu::check_and_handle_multiplex_fault(pfa)) [[unlikely]]
+    return 1;
+
   Thread *t = current_thread();
 
   if (t->check_and_handle_mem_op_fault(error_code, ts)) [[unlikely]]
