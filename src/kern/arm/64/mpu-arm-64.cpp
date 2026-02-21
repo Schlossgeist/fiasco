@@ -402,7 +402,7 @@ INTERFACE [arm && 64bit && mpu && arm_v8]:
 
 #include "cpu_lock.h"
 
-EXTENSION struct Mpu_region
+EXTENSION struct Mpu_region_base
 {
 public:
   Mword prbar, prlar;
@@ -446,28 +446,28 @@ public:
 IMPLEMENTATION [arm && 64bit && mpu && arm_v8]:
 
 IMPLEMENT constexpr
-Mpu_region::Mpu_region()
+Mpu_region_base::Mpu_region_base()
 : prbar(~0x3fUL), prlar(0)
 {}
 
 IMPLEMENT inline
-Mpu_region::Mpu_region(Mword start, Mword end, Mpu_region_attr a)
+Mpu_region_base::Mpu_region_base(Mword start, Mword end, Mpu_region_attr a)
 : prbar(start & ~0x3fUL), prlar(end & ~0x3fUL)
 { attr(a); }
 
 IMPLEMENT constexpr
 Mword
-Mpu_region::start() const
+Mpu_region_base::start() const
 { return prbar & ~0x3fUL; }
 
 IMPLEMENT constexpr
 Mword
-Mpu_region::end() const
+Mpu_region_base::end() const
 { return prlar |  0x3fUL; }
 
 IMPLEMENT constexpr
 Mpu_region_attr
-Mpu_region::attr() const
+Mpu_region_base::attr() const
 {
   return Mpu_region_attr::make_attr(
             L4_fpage::Rights::R()
@@ -487,21 +487,21 @@ Mpu_region::attr() const
 
 IMPLEMENT inline
 void
-Mpu_region::start(Mword start)
+Mpu_region_base::start(Mword start)
 {
   prbar = (prbar & 0x3fUL) | (start & ~0x3fUL);
 }
 
 IMPLEMENT inline
 void
-Mpu_region::end(Mword end)
+Mpu_region_base::end(Mword end)
 {
   prlar = (prlar & 0x3fUL) | (end & ~0x3fUL);
 }
 
 IMPLEMENT inline
 void
-Mpu_region::attr(Mpu_region_attr attr)
+Mpu_region_base::attr(Mpu_region_attr attr)
 {
   prbar = (prbar & ~0x3fUL)
           | ((attr.rights() & L4_fpage::Rights::U()) ? Prot::EL0 : Prot::None)
@@ -519,7 +519,7 @@ Mpu_region::attr(Mpu_region_attr attr)
 
 IMPLEMENT inline
 void
-Mpu_region::disable()
+Mpu_region_base::disable()
 {
   prlar &= ~Enabled;
 }
@@ -541,7 +541,7 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
   while (i < touched.size() && (i = touched.ffs(i)))
     {
       Mpu_arm::prselr(i - 1);
-      if (!inplace && (Mpu_arm::prlar() & Mpu_region::Enabled))
+      if (!inplace && (Mpu_arm::prlar() & Mpu_region_base::Enabled))
         {
           // Always disable first! Otherwise a colliding region might exist
           // briefly after writing prbar!

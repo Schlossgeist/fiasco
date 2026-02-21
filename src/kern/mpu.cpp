@@ -62,16 +62,16 @@ public:
 };
 
 /**
- * A single MPU region.
+ * Base for classes handling a single MPU region. Classes that organize
+ * MPU regions, i.e. in linked lists or trees, inherit from this.
  *
- * Regions are organized as a sorted, double linked, cyclic list. The
- * architecture extends the struct with the actual data for the hardware. All
- * addresses are inclusive!
+ * The architecture extends the struct with the actual data for the hardware.
+ * All addresses are inclusive!
  */
-struct Mpu_region : public cxx::D_list_item
+struct Mpu_region_base
 {
-  constexpr Mpu_region();
-  Mpu_region(Mword start, Mword end, Mpu_region_attr attr);
+  constexpr Mpu_region_base();
+  Mpu_region_base(Mword start, Mword end, Mpu_region_attr attr);
 
   constexpr Mword start() const;
   constexpr Mword end() const;
@@ -82,11 +82,21 @@ struct Mpu_region : public cxx::D_list_item
   inline void attr(Mpu_region_attr attr);
   inline void disable();
 
-  bool operator < (Mpu_region const &o) const
+  bool operator < (Mpu_region_base const &o) const
   { return end() < o.start(); }
 
   constexpr bool contains(Mword addr) const
   { return start() <= addr && addr <= end(); }
+};
+
+/**
+ * A single MPU region.
+ *
+ * Regions are organized as a sorted, double linked, cyclic list.
+ */
+struct Mpu_region : public Mpu_region_base, public cxx::D_list_item
+{
+  using Mpu_region_base::Mpu_region_base;
 };
 
 struct Mpu_allocator
