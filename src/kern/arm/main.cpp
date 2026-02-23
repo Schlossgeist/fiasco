@@ -10,6 +10,8 @@ IMPLEMENTATION [arm]:
 #include <cstdio>
 #include <cstring>
 
+#include "ansi.h"
+
 #include "config.h"
 #include "globals.h"
 #include "initcalls.h"

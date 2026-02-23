@@ -2,6 +2,8 @@ INTERFACE:
 
 #include <cstdio>
 
+#include "ansi.h"
+
 #include "config.h"
 
 enum class Warn_level : int
@@ -19,10 +21,10 @@ constexpr bool is_enabled(Warn_level level)
 
 }
 
-#define WARNX(level, ...) \
-  do {                                                            \
-       if constexpr (Warn::is_enabled(Warn_level::level))         \
-         printf("\n\033[31mKERNEL\033[m: " #level ": " __VA_ARGS__); \
+#define WARNX(level, ...)                                                       \
+  do {                                                                          \
+       if constexpr (Warn::is_enabled(Warn_level::level))                       \
+         printf("\n" ANSI("KERNEL", RED, BOLD) ": " #level ": " __VA_ARGS__);   \
      } while (0)
 
 #define WARN(...) WARNX(Warning, __VA_ARGS__)
