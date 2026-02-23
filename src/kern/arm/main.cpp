@@ -12,6 +12,8 @@ IMPLEMENTATION [arm]:
 
 #include <cxx/defensive>
 
+#include "ansi.h"
+
 #include "config.h"
 #include "globals.h"
 #include "initcalls.h"
@@ -67,7 +69,7 @@ static void exit_question()
 	  // because of unresolved static destructor dependency
 	  // problems.
 	  // SO just do the reset at this point.
-	  puts("\033[1mRebooting...\033[0m");
+	  puts(ANSI("Rebooting...", BOLD));
 	  cxx::check_noreturn<platform_reset>();
 	}
     }
