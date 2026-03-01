@@ -22,6 +22,8 @@ unsigned long strtoul (const char *__restrict, char **__restrict, int);
 long long strtoll (const char *__restrict, char **__restrict, int);
 unsigned long long strtoull (const char *__restrict, char **__restrict, int);
 
+int rand (void);
+
 
 #define EXIT_FAILURE 1
 #define EXIT_SUCCESS 0
