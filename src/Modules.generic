@@ -208,6 +208,7 @@ CSRC_LIBC         := memchr.c \
                      memrchr.c \
                      strncmp.c \
                      \
+                     rand.c \
                      strtol.c \
                      \
                      isalnum.c \
