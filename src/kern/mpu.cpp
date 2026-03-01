@@ -395,6 +395,9 @@ IMPLEMENT static inline
 void Mpu::expand_virtual_regions(size_t new_size)
 {
   _virtual_regions.reserve(new_size);
+
+  INFO("MPUltiplex regions cache size extended to %zu\n", new_size);
+  Mpu::dump();
 }
 
 IMPLEMENT static inline
@@ -419,26 +422,26 @@ void Mpu::dump()
     {
       auto const &region = _virtual_regions[i];
       auto attr = region.attr();
-      //     FORMAT STR         DELIMITER STR
-      printf("  %16s "          ANSI("- [", DIM) ""     // label
-             "" L4_MWORD_FMT "" ANSI("..", DIM) ""      // start
-             "" L4_MWORD_FMT "" ANSI(", ", DIM) ""      // end
-             "%7s"              ANSI("|", DIM) ""       // enabled 
-             "%-8s"             ANSI(",   ", DIM) ""    // type
-             "%cR%c%c"          ANSI("]@", DIM) ""      // rights
-             "%-4u\n",                                  // slot
-             region.label(),
-             region.start(),
-             region.end(),
-             attr.enabled() ? "yes" : "no",
-             (attr.type() == L4_snd_item::Memory_type::Normal())
-                ? "normal"
-                : ((attr.type() == L4_snd_item::Memory_type::Uncached())
-                    ? "uncached" : "buffered"),
-             (attr.rights() & L4_fpage::Rights::U()) ? 'U' : '-',
-             (attr.rights() & L4_fpage::Rights::W()) ? 'W' : '-',
-             (attr.rights() & L4_fpage::Rights::X()) ? 'X' : '-',
-             i);
+      //          FORMAT STR         DELIMITER STR
+      ansi_printf("  %16s "          ANSI("- [", DIM) ""     // label
+                  "" L4_MWORD_FMT "" ANSI("..", DIM) ""      // start
+                  "" L4_MWORD_FMT "" ANSI(", ", DIM) ""      // end
+                  "%7s"              ANSI("|", DIM) ""       // enabled 
+                  "%-8s"             ANSI(",   ", DIM) ""    // type
+                  "%cR%c%c"          ANSI("]@", DIM) ""      // rights
+                  "%-4u\n",                                  // slot
+                  region.label(),
+                  region.start(),
+                  region.end(),
+                  attr.enabled() ? ANSI("yes", GREEN) : ANSI("no", RED),
+                  (attr.type() == L4_snd_item::Memory_type::Normal())
+                     ? "normal"
+                     : ((attr.type() == L4_snd_item::Memory_type::Uncached())
+                         ? "uncached" : "buffered"),
+                  (attr.rights() & L4_fpage::Rights::U()) ? 'U' : '-',
+                  (attr.rights() & L4_fpage::Rights::W()) ? 'W' : '-',
+                  (attr.rights() & L4_fpage::Rights::X()) ? 'X' : '-',
+                  i);
     }
   printf("\n");
 }
@@ -937,28 +940,28 @@ Mpu_regions::dump() const
     {
       Mpu_region const &region = (*this)[i - 1];
       auto attr = region.attr();
-      //     FORMAT STR         DELIMITER STR
-      printf("  %16s "          ANSI("- [", DIM) ""     // label
-             "" L4_MWORD_FMT "" ANSI("..", DIM) ""      // start
-             "" L4_MWORD_FMT "" ANSI(", ", DIM) ""      // end
-             "%7s"              ANSI("|", DIM) ""       // enabled 
-             "%-8s"             ANSI(",   ", DIM) ""    // type
-             "%cR%c%c"          ANSI("]@", DIM) ""      // rights
-             "%-4u"             ANSI(" - ", DIM) ""     // slot
-             "%s\n",                                    // status
-             region.label(),
-             region.start(),
-             region.end(),
-             attr.enabled() ? "yes" : "no",
-             (attr.type() == L4_snd_item::Memory_type::Normal())
-                ? "normal"
-                : ((attr.type() == L4_snd_item::Memory_type::Uncached())
-                    ? "uncached" : "buffered"),
-             (attr.rights() & L4_fpage::Rights::U()) ? 'U' : '-',
-             (attr.rights() & L4_fpage::Rights::W()) ? 'W' : '-',
-             (attr.rights() & L4_fpage::Rights::X()) ? 'X' : '-',
-             i - 1,
-             _reserved[i] ? "reserved" : "used");
+      //          FORMAT STR         DELIMITER STR
+      ansi_printf("  %16s "          ANSI("- [", DIM) ""     // label
+                  "" L4_MWORD_FMT "" ANSI("..", DIM) ""      // start
+                  "" L4_MWORD_FMT "" ANSI(", ", DIM) ""      // end
+                  "%7s"              ANSI("|", DIM) ""       // enabled 
+                  "%-8s"             ANSI(",   ", DIM) ""    // type
+                  "%cR%c%c"          ANSI("]@", DIM) ""      // rights
+                  "%-4u"             ANSI(" - ", DIM) ""     // slot
+                  "%s\n",                                    // status
+                  region.label(),
+                  region.start(),
+                  region.end(),
+                  attr.enabled() ? ANSI("yes", GREEN) : ANSI("no", RED),
+                  (attr.type() == L4_snd_item::Memory_type::Normal())
+                     ? "normal"
+                     : ((attr.type() == L4_snd_item::Memory_type::Uncached())
+                         ? "uncached" : "buffered"),
+                  (attr.rights() & L4_fpage::Rights::U()) ? 'U' : '-',
+                  (attr.rights() & L4_fpage::Rights::W()) ? 'W' : '-',
+                  (attr.rights() & L4_fpage::Rights::X()) ? 'X' : '-',
+                  i - 1,
+                  _reserved[i] ? "reserved" : "used");
     }
   printf("\n");
 }
