@@ -535,6 +535,12 @@ void
 Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
           bool inplace)
 {
+  if (false && Mpu::mpultiplex_enabled())
+    {
+      printf("----------------------------------------------------------------------\n");
+      regions.dump();
+    }
+
   if (Mpu::mpultiplex_enabled())
     {
       if (regions.size() > Mpu::regions())
@@ -559,12 +565,27 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
 
   // PRSELR must be 0 because it's assumed by kernel entry/exit code!
   Mpu_arm::prselr(0);
+
+  if (false && Mpu::mpultiplex_enabled())
+    {
+      INFO("Sync");
+
+      printf("Touched ");
+      touched.dump();
+      Mpu::dump();
+    }
 }
 
 IMPLEMENT static
 void
 Mpu::update(Mpu_regions const &regions)
 {
+  if (false && Mpu::mpultiplex_enabled())
+    {
+      printf("----------------------------------------------------------------------\n");
+      regions.dump();
+    }
+
   Mpu_regions_mask const &reserved = regions.reserved();
 
   if (Mpu::mpultiplex_enabled())
@@ -652,4 +673,13 @@ Mpu::update(Mpu_regions const &regions)
   // PRENR. Hence, all region updates must be already committed to not read
   // stale data through PRENR.
   Mem::isb();
+
+  if (false && Mpu::mpultiplex_enabled())
+    {
+      INFO("Update");
+
+      printf("Reserved ");
+      reserved.dump();
+      Mpu::dump();
+    }
 }
