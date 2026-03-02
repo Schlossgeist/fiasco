@@ -20,11 +20,12 @@ class Mpu_region_attr
   L4_fpage::Rights _rights;
   L4_snd_item::Memory_type _type;
   bool _enabled;
+  bool _pinned;
 
   constexpr Mpu_region_attr(L4_fpage::Rights rights,
                             L4_snd_item::Memory_type type,
-                            bool enabled)
-  : _rights(rights), _type(type), _enabled(enabled)
+                            bool enabled, bool pinned)
+  : _rights(rights), _type(type), _enabled(enabled), _pinned(pinned)
   {}
 
 public:
@@ -36,14 +37,15 @@ public:
   static constexpr Mpu_region_attr
   make_attr(L4_fpage::Rights rights,
             L4_snd_item::Memory_type type = L4_snd_item::Memory_type::Normal(),
-            bool enabled = true)
+            bool enabled = true, bool pinned = false)
   {
-    return Mpu_region_attr(rights, type, enabled);
+    return Mpu_region_attr(rights, type, enabled, pinned);
   }
 
   constexpr L4_fpage::Rights rights() const { return _rights; }
   constexpr L4_snd_item::Memory_type type() const { return _type; }
   constexpr bool enabled() const { return _enabled; }
+  constexpr bool pinned() const { return _pinned; }
 
   inline void add_rights(L4_fpage::Rights rights)
   {
@@ -98,6 +100,7 @@ struct Mpu_region_base
 
 private:
   Label_buffer _label = {0};
+  bool pinned = false;
 };
 
 /**
@@ -376,6 +379,8 @@ private:
 
   // bitmask of cached regions that are currently active in the physical MPU
   static Mpu_regions_mask _active_regions;
+  // bitmask of cached regions that are not supposed to be swapped out
+  static Mpu_regions_mask _pinned_regions;
   // storage for the data structures used by the MPUltiplex subsystem
   static Backing_storage _virtual_regions;
 };
@@ -386,6 +391,7 @@ IMPLEMENTATION [mpu]:
 #include "ram_quota.h"
 
 Mpu_regions_mask Mpu::_active_regions;
+Mpu_regions_mask Mpu::_pinned_regions;
 Backing_storage Mpu::_virtual_regions = Backing_storage();
 
 IMPLEMENT static inline NEEDS["kmem_alloc.h", "ram_quota.h"]
@@ -406,6 +412,9 @@ IMPLEMENT static inline
 void Mpu::init_mpultiplex(Cpu_number cpu)
 {
   new (&_active_regions) Mpu_regions_mask(Mpu::regions());
+  new (&_pinned_regions) Mpu_regions_mask(Mpu::regions());
+  // includes Kernel Text, Kip, Kernel Heap and UART MMIO
+  _pinned_regions.set_first_bits(4);
   new (&_virtual_regions) Backing_storage(Mpu::regions());
 }
 
@@ -420,6 +429,7 @@ void Mpu::expand_virtual_regions(size_t new_size)
 {
   Mpu_regions_mask m(new_size);
   _active_regions |= m;
+  _pinned_regions |= m;
   _virtual_regions.reserve(new_size);
 
   INFO("MPUltiplex regions cache size extended to %zu\n", new_size);
@@ -430,6 +440,7 @@ IMPLEMENT static inline
 void Mpu::flush_cache()
 {
   _active_regions.clear_all();
+  _pinned_regions.set_first_bits(4);
   _virtual_regions.clear();
 }
 
@@ -463,7 +474,7 @@ void Mpu::dump()
                   "%-8s"             ANSI(",   ", DIM) ""    // type
                   "%cR%c%c"          ANSI("]@", DIM) ""      // rights
                   "%-4u"             ANSI(" - ", DIM) ""     // slot
-                  "%s\n",                                    // multiplex status
+                  "%s, %s\n",                                // multiplex state
                   region.label(),
                   region.start(),
                   region.end(),
@@ -476,7 +487,8 @@ void Mpu::dump()
                   (attr.rights() & L4_fpage::Rights::W()) ? 'W' : '-',
                   (attr.rights() & L4_fpage::Rights::X()) ? 'X' : '-',
                   i,
-                  _active_regions[i] ? "active" : "cached");
+                  _active_regions[i] ? "active" : "cached",
+                  _pinned_regions[i] ? "pinned" : "");
     }
   printf("\n");
 }
