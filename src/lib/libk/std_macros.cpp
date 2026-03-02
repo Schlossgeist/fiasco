@@ -39,6 +39,12 @@ INTERFACE:
 
 #endif
 
+#if defined(NDEBUG)
+#define FIASCO_DEBUG
+#else
+#define FIASCO_DEBUG [[gnu::optimize(0)]]
+#endif
+
 #define FIASCO_STRINGIFY_(x) #x
 #define FIASCO_STRINGIFY(x)  FIASCO_STRINGIFY_(x)
 
