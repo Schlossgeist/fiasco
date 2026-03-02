@@ -451,7 +451,10 @@ Mpu_region_base::Mpu_region_base()
 IMPLEMENT inline
 Mpu_region_base::Mpu_region_base(Mword start, Mword end, Mpu_region_attr a)
 : prbar(start & ~0x3fUL), prlar(end & ~0x3fUL)
-{ attr(a); }
+{
+  attr(a);
+  pinned = a.pinned();
+}
 
 IMPLEMENT constexpr
 Mword
@@ -480,7 +483,8 @@ Mpu_region_base::attr() const
              : (((prlar & Attr::Mask) == Attr::Device)
                 ? L4_snd_item::Memory_type::Uncached()
                 : L4_snd_item::Memory_type::Buffered()),
-            prlar & Enabled);
+            prlar & Enabled,
+            pinned);
 }
 
 IMPLEMENT inline
@@ -513,6 +517,7 @@ Mpu_region_base::attr(Mpu_region_attr attr)
                   ? Attr::Buffered
                   : Attr::Normal))
           | (attr.enabled() ? Enabled : Disabled);
+  pinned = attr.pinned();
 }
 
 IMPLEMENT inline
