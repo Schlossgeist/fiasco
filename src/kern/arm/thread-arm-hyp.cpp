@@ -251,16 +251,17 @@ Thread::is_transient_mpu_fault(Mword abort_type, Mword raw_hsr)
   Mword pfa;
   asm volatile("mrc p15, 4, %0, c6, c0, 0" : "=r"(pfa));  // HDFAR
 
+  auto const& kd = *Kmem::kdir;
   switch (hsr.pf_fsc())
     {
     case 0b000100:  // level 0 translation fault
       // Only kernel heap region start/end is adapted on entry
-      if (!(*Kmem::kdir)[Kpdir::Kernel_heap].contains(pfa))
+      if (!kd[Kpdir::Kernel_heap].contains(pfa))
         return false;
       break;
     case 0b001100:  // level 0 permission fault
       // Only the KIP permissions are manipulated.
-      if (!(*Kmem::kdir)[Kpdir::Kip].contains(pfa))
+      if (!kd[Kpdir::Kip].contains(pfa))
         return false;
       break;
     default:
