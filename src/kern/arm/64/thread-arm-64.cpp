@@ -395,16 +395,17 @@ PRIVATE static inline NEEDS["kmem.h"]
 bool
 Thread::is_transient_mpu_fault(Trap_state *ts, Arm_esr esr)
 {
+  auto const& kd = *Kmem::kdir;
   switch (esr.pf_fsc())
     {
     case 0b000100:  // level 0 translation fault
       // Only kernel heap region start/end is adapted on entry
-      if (!(*Kmem::kdir)[Kpdir::Kernel_heap].contains(ts->pf_address))
+      if (!kd[Kpdir::Kernel_heap].contains(ts->pf_address))
         return false;
       break;
     case 0b001100:  // level 0 permission fault
       // Only the KIP permissions are manipulated.
-      if (!(*Kmem::kdir)[Kpdir::Kip].contains(ts->pf_address))
+      if (!kd[Kpdir::Kip].contains(ts->pf_address))
         return false;
       break;
     default:

@@ -93,8 +93,10 @@ Kernel_thread::boot_app_cpus()
 
   _tmp->sctlr = Proc::sctlr();
   _tmp->mair  = Mpu::Mair_bits;
-  _tmp->prbar0 = (*Kmem::kdir)[Kpdir::Kernel_text].prbar;
-  _tmp->prlar0 = (*Kmem::kdir)[Kpdir::Kernel_text].prlar;
+
+  auto const& kd = *Kmem::kdir;
+  _tmp->prbar0 = kd[Kpdir::Kernel_text].prbar;
+  _tmp->prlar0 = kd[Kpdir::Kernel_text].prlar;
 
   asm volatile ("dsb sy" : : : "memory");
   Mem_unit::clean_dcache(_tmp, _tmp + 1);
