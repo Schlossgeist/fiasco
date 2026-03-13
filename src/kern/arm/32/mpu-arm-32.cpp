@@ -1,5 +1,7 @@
 INTERFACE [arm && 32bit && mpu && arm_v8]:
 
+#include <cxx/utility>
+
 #include "mem.h"
 
 struct Mpu_arm_el1
@@ -96,6 +98,7 @@ struct Mpu_arm_el1
   }
 
   template<unsigned I>
+  inline ALWAYS_INLINE
   static Mword prbar()
   {
     Mword v;
@@ -108,6 +111,7 @@ struct Mpu_arm_el1
   }
 
   template<unsigned I>
+  inline ALWAYS_INLINE
   static void prxar(Mword b, Mword l)
   {
     if constexpr (I < Mem_layout::Mpu_regions)
@@ -125,6 +129,7 @@ struct Mpu_arm_el1
   // We need dedicated PRLARx access for prenr_mask()
 
   template<unsigned I>
+  inline ALWAYS_INLINE
   static void prlar(Mword v)
   {
     if constexpr (I < Mem_layout::Mpu_regions)
@@ -137,6 +142,7 @@ struct Mpu_arm_el1
   }
 
   template<unsigned I>
+  inline ALWAYS_INLINE
   static Mword prlar()
   {
     Mword v;
@@ -195,6 +201,7 @@ struct Mpu_arm_el2
 
 
   template<unsigned I>
+  inline ALWAYS_INLINE
   static void prxar(Mword b, Mword l)
   {
     if constexpr (I < Mem_layout::Mpu_regions)
@@ -423,6 +430,29 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
     }
 }
 
+template<int I = Mem_layout::Mpu_regions>
+void
+write_to_hw_impl2(Mpu_regions const& regions)
+{
+  if constexpr (I > 2) {
+    write_to_hw_impl2<I - 1>(regions);
+    Mpu_arm::prxar<I>(regions[I].prbar, regions[I].prlar);
+  }
+}
+
+template<size_t... I>
+void
+write_to_hw_impl(Mpu_regions const& regions, size_t idx, cxx::index_sequence<I...>) {
+  using Fn = void (*)(Mpu_regions const&);
+  static constexpr Fn table[] = { &write_to_hw_impl2<I>... };
+
+  table[idx - 1](regions);
+}
+
+void write_to_hw(Mpu_regions const& regions, size_t cap) {
+    write_to_hw_impl(regions, cap, cxx::make_index_sequence<Mem_layout::Mpu_regions>{});
+}
+
 IMPLEMENT static inline
 void
 Mpu::update(Mpu_regions const &regions)
@@ -438,50 +468,7 @@ Mpu::update(Mpu_regions const &regions)
   static_assert(reserved.size() <= 32,
                 "HPRENR register only covers <= 32 regions!");
 
-#define UPDATE(i) \
-  Mpu_arm::prxar<(i)>(regions[(i)].prbar, regions[(i)].prlar);
-
-  // Directly skip non-existing regions. We don't support more than 32 regions.
-  static_assert(Mem_layout::Mpu_regions <= 32, "No more than 32 regions!");
-  switch (regions.size())
-    {
-      default:
-      case 32: UPDATE(31); [[fallthrough]];
-      case 31: UPDATE(30); [[fallthrough]];
-      case 30: UPDATE(29); [[fallthrough]];
-      case 29: UPDATE(28); [[fallthrough]];
-      case 28: UPDATE(27); [[fallthrough]];
-      case 27: UPDATE(26); [[fallthrough]];
-      case 26: UPDATE(25); [[fallthrough]];
-      case 25: UPDATE(24); [[fallthrough]];
-      case 24: UPDATE(23); [[fallthrough]];
-      case 23: UPDATE(22); [[fallthrough]];
-      case 22: UPDATE(21); [[fallthrough]];
-      case 21: UPDATE(20); [[fallthrough]];
-      case 20: UPDATE(19); [[fallthrough]];
-      case 19: UPDATE(18); [[fallthrough]];
-      case 18: UPDATE(17); [[fallthrough]];
-      case 17: UPDATE(16); [[fallthrough]];
-      case 16: UPDATE(15); [[fallthrough]];
-      case 15: UPDATE(14); [[fallthrough]];
-      case 14: UPDATE(13); [[fallthrough]];
-      case 13: UPDATE(12); [[fallthrough]];
-      case 12: UPDATE(11); [[fallthrough]];
-      case 11: UPDATE(10); [[fallthrough]];
-      case 10: UPDATE(9);  [[fallthrough]];
-      case  9: UPDATE(8);  [[fallthrough]];
-      case  8: UPDATE(7);  [[fallthrough]];
-      case  7: UPDATE(6);  [[fallthrough]];
-      case  6: UPDATE(5);  [[fallthrough]];
-      case  5: UPDATE(4);  [[fallthrough]];
-      case  4: UPDATE(3);
-        // UPDATE(2) // HEAP
-        // UPDATE(1) // KIP
-        // UPDATE(0) // kernel text
-        break;
-    }
-
-#undef UPDATE
+  write_to_hw(regions, regions.size());
 
   // Theoretically, because only user space regions are reconfigured, the ERET
   // on the kernel exit should be sufficient. But there we read/modify/write

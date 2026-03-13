@@ -1,0 +1,32 @@
+// vi:set ft=cpp: -*- Mode: C++ -*-
+#pragma once
+
+namespace cxx {
+
+template<class T, T... Ints>
+class integer_sequence {};
+
+namespace detail {
+  template<class T, T I, T N, T... integers>
+  struct make_integer_sequence_helper
+  {
+      using type = typename make_integer_sequence_helper<T, I + 1, N, integers..., I>::type;
+  };
+
+  template<class T, T N, T... integers>
+  struct make_integer_sequence_helper<T, N, N, integers...>
+  {
+      using type = integer_sequence<T, integers...>;
+  };
+}
+
+template<class T, T N>
+using make_integer_sequence = detail::make_integer_sequence_helper<T, 0, N>::type;
+
+template<size_t... Ints>
+using index_sequence = integer_sequence<size_t, Ints...>;
+
+template<size_t N>
+using make_index_sequence = make_integer_sequence<size_t, N>;
+
+}
