@@ -13,7 +13,9 @@ public:
     // VE System register device, necessary for shutdown
     Ve_sysregs_base   = 0x9c010000,
     Ve_sysregs_size   = 0x10000,
-  };
 
-  enum Mpu_layout { Mpu_regions = 8 };
+    // Actually 32 regions on EL1 and EL2 but we can only handle 31 efficiently
+    // at the moment.
+    Mpu_regions = 31,
+  };
 };
