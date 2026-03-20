@@ -562,13 +562,13 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
       if (!bypass_cache && mpultiplex_enabled())
         {
           Mpu_region_base const &r = regions[i - 1];
-          _virtual_regions[i - 1] = r;
-          _virtual_regions[i - 1].label(r.label());
+          _virtual_regions.current()[i - 1] = r;
+          _virtual_regions.current()[i - 1].label(r.label());
 
-          _active_regions.clear_bit(i - 1);
+          _active_regions.current().clear_bit(i - 1);
 
           if (r.attr().pinned())
-            _pinned_regions.set_bit(i - 1);
+            _pinned_regions.current().set_bit(i - 1);
         }
 
       if (i - 1 < Mpu::hardware_regions())
@@ -587,12 +587,12 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
 
           if (!bypass_cache && mpultiplex_enabled())
             {
-              _virtual_regions[i - 1].slot(i - 1);
-              _active_regions.set_bit(i - 1);
+              _virtual_regions.current()[i - 1].slot(i - 1);
+              _active_regions.current().set_bit(i - 1);
             }
 
           if (!bypass_cache)
-            invariant(hardware_regions() >= _active_regions.popcount());
+            invariant(hardware_regions() >= _active_regions.current().popcount());
         }
     }
 
@@ -652,11 +652,11 @@ Mpu::update(Mpu_regions const &regions)
       for (unsigned i = 0; i < regions.size(); ++i)
         {
           Mpu_region_base const &r = regions[i];
-          _virtual_regions[i] = r;
-          _virtual_regions[i].label(r.label());
+          _virtual_regions.current()[i] = r;
+          _virtual_regions.current()[i].label(r.label());
 
           if (r.attr().pinned())
-            _pinned_regions.set_bit(i);
+            _pinned_regions.current().set_bit(i);
         }
     }
 
@@ -665,23 +665,23 @@ Mpu::update(Mpu_regions const &regions)
   // prlar of the updated region is still enabled.
   Mpu_arm::prenr(Mpu_arm::prenr() & *reserved.raw());
 
-#define UPDATE(base, i)                                             \
-  do                                                                \
-    {                                                               \
-      if constexpr (((base) + (i)) < Mem_layout::Mpu_regions)       \
-        Mpu_arm::prxar##i(regions[(base) + (i)].prbar,              \
-                          regions[(base) + (i)].prlar);             \
-        if (Mpu::mpultiplex_enabled())                              \
-          Mpu_arm::prxar##i(_virtual_regions[(base) + (i)].prbar,   \
-                            _virtual_regions[(base) + (i)].prlar);  \
-    }                                                               \
+#define UPDATE(base, i)                                                         \
+  do                                                                            \
+    {                                                                           \
+      if constexpr (((base) + (i)) < Mem_layout::Mpu_regions)                   \
+        Mpu_arm::prxar##i(regions[(base) + (i)].prbar,                          \
+                          regions[(base) + (i)].prlar);                         \
+        if (Mpu::mpultiplex_enabled())                                          \
+          Mpu_arm::prxar##i(_virtual_regions.current()[(base) + (i)].prbar,     \
+                            _virtual_regions.current()[(base) + (i)].prlar);    \
+    }                                                                           \
   while (false)
 
   unsigned real_size = min(hardware_regions(), regions.size());
-  _active_regions.set_first_bits(real_size);
+  _active_regions.current().set_first_bits(real_size);
 
   for (unsigned i = 0; i < real_size; ++i)
-    _virtual_regions[i].slot(i);
+    _virtual_regions.current()[i].slot(i);
 
   // We don't support more than 32 regions. Between 17 and 32 regions we have
   // to switch banks.
