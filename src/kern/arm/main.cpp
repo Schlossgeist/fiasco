@@ -63,7 +63,8 @@ IMPLEMENTATION[arm && mp && mpu]:
 static void init_ap_cpu_mpu()
 {
   Mpu::init();
-  Mpu::sync(*Kmem::kdir, Kmem::kdir->used(), true);
+  // bypass MPUltiplex cache here because current_cpu doesn't work yet
+  Mpu::sync(*Kmem::kdir, Kmem::kdir->used(), true, true);
   Cpu::init_sctlr();
 }
 
