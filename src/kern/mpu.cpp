@@ -10,6 +10,7 @@ INTERFACE [mpu]:
 #include "l4_msg_item.h"
 #include "mem_layout.h"
 #include "panic.h"
+#include "per_cpu_data.h"
 #include "warn.h"
 
 /**
@@ -434,11 +435,11 @@ private:
                    bool inplace = false);
 
   // bitmask of cached regions that are currently active in the physical MPU
-  static Mpu_regions_mask _active_regions;
+  static Per_cpu<Mpu_regions_mask> _active_regions;
   // bitmask of cached regions that are not supposed to be swapped out
-  static Mpu_regions_mask _pinned_regions;
+  static Per_cpu<Mpu_regions_mask> _pinned_regions;
   // storage for the data structures used by the MPUltiplex subsystem
-  static Backing_storage _virtual_regions;
+  static Per_cpu<Backing_storage> _virtual_regions;
 };
 
 IMPLEMENTATION [mpu]:
@@ -448,9 +449,9 @@ IMPLEMENTATION [mpu]:
 #include "kmem_alloc.h"
 #include "ram_quota.h"
 
-Mpu_regions_mask Mpu::_active_regions;
-Mpu_regions_mask Mpu::_pinned_regions;
-Backing_storage Mpu::_virtual_regions = Backing_storage();
+DEFINE_PER_CPU Per_cpu<Mpu_regions_mask> Mpu::_active_regions;
+DEFINE_PER_CPU Per_cpu<Mpu_regions_mask> Mpu::_pinned_regions;
+DEFINE_PER_CPU Per_cpu<Backing_storage> Mpu::_virtual_regions;
 
 IMPLEMENT static inline NEEDS["kmem_alloc.h", "ram_quota.h"]
 void *
@@ -469,40 +470,51 @@ Mpu_allocator::free(size_t size, void *obj)
 IMPLEMENT static inline
 void Mpu::init_mpultiplex(Cpu_number cpu)
 {
-  new (&_active_regions) Mpu_regions_mask(Mpu::regions());
-  new (&_pinned_regions) Mpu_regions_mask(Mpu::regions());
+  new (&_active_regions.cpu(cpu)) Mpu_regions_mask(Config::Mpultiplex_block_size);
+  new (&_pinned_regions.cpu(cpu)) Mpu_regions_mask(Config::Mpultiplex_block_size);
   // includes Kernel Text, Kip, Kernel Heap and UART MMIO
-  _pinned_regions.set_first_bits(4);
-  new (&_virtual_regions) Backing_storage(Mpu::regions());
+  _pinned_regions.cpu(cpu).set_first_bits(4);
+  new (&_virtual_regions.cpu(cpu)) Backing_storage(Config::Mpultiplex_block_size);
+  printf(ANSI("MPUltiplex subsystem", MAGENTA, BOLD)
+         " initialized with "
+         ANSI("block size of %u", RED, BOLD)
+         " and "
+         ANSI("%u hardware regions", RED, BOLD)
+         "...\n",
+         Config::Mpultiplex_block_size, Mpu::hardware_regions());
 }
 
 IMPLEMENT static inline
 bool Mpu::mpultiplex_enabled()
 {
-  return _virtual_regions.size() > 0;
+  return _virtual_regions.current().size() > 0;
 }
 
 IMPLEMENT static inline
 void Mpu::expand_virtual_regions(size_t new_size)
 {
   Mpu_regions_mask m(new_size);
-  _active_regions |= m;
-  _pinned_regions |= m;
-  _virtual_regions.reserve(new_size);
+  _active_regions.current() |= m;
+  _pinned_regions.current() |= m;
+  _virtual_regions.current().reserve(new_size);
 
-  INFO("MPUltiplex regions cache size extended to %zu\n", new_size);
+  INFO("[CPU%u] MPUltiplex regions cache size extended to %zu\n",
+       cxx::int_value<Cpu_number>(current_cpu()), new_size);
   Mpu::dump();
 }
 
 IMPLEMENT static inline NEEDS[<cstdlib>]
 bool Mpu::check_and_handle_multiplex_fault(Mword address)
 {
+  Mpu_regions_mask const &curr_active_regions  = _active_regions.current();
+  Backing_storage  const &curr_virtual_regions = _virtual_regions.current();
+
   int swap_in_slot = -1;
   int swap_out_slot = -1;
-  for (unsigned i = 0; i < _virtual_regions.size(); ++i)
-    if (_virtual_regions[i].contains(address))
+  for (unsigned i = 0; i < curr_virtual_regions.size(); ++i)
+    if (curr_virtual_regions[i].contains(address))
       {
-        if (!_active_regions[i])
+        if (!curr_active_regions[i])
           {
             // region is cached, but inactive -> swap it in
             swap_in_slot = i;
@@ -515,34 +527,34 @@ bool Mpu::check_and_handle_multiplex_fault(Mword address)
   // not a multiplex fault; bail out
   if (swap_in_slot < 0) return false;
 
-  Mpu_regions_mask available_regions = _active_regions;
-  available_regions &= ~_pinned_regions;
+  Mpu_regions_mask available_regions = _active_regions.current();
+  available_regions &= ~_pinned_regions.current();
 
   while (swap_out_slot = rand() % regions(), !available_regions[swap_out_slot])
     ; // empty statement
 
-  Cached_mpu_region &swap_in_region = _virtual_regions[swap_in_slot];
-  Cached_mpu_region &swap_out_region = _virtual_regions[swap_out_slot];
+  Cached_mpu_region &swap_in_region = _virtual_regions.current()[swap_in_slot];
+  Cached_mpu_region &swap_out_region = _virtual_regions.current()[swap_out_slot];
 
   const int hardware_slot = swap_out_region.slot();
   invariant(3 < hardware_slot);
   invariant(static_cast<unsigned>(hardware_slot) < hardware_regions());
 
-  INFO("Swapped region in slot %d [" L4_MWORD_FMT ".." L4_MWORD_FMT "]\n\t"
-       "for region in slot %d [" L4_MWORD_FMT ".." L4_MWORD_FMT "]\n\t"
-       "via hardware slot %d.\n",
-       swap_out_slot, swap_out_region.start(), swap_out_region.end(),
-       swap_in_slot, swap_in_region.start(), swap_in_region.end(),
-       hardware_slot);
+//  INFO("Swapped region in slot %d [" L4_MWORD_FMT ".." L4_MWORD_FMT "]\n\t"
+//       "for region in slot %d [" L4_MWORD_FMT ".." L4_MWORD_FMT "]\n\t"
+//       "via hardware slot %d.\n",
+//       swap_out_slot, swap_out_region.start(), swap_out_region.end(),
+//       swap_in_slot, swap_in_region.start(), swap_in_region.end(),
+//       hardware_slot);
 
   Mpu::swap(hardware_slot, swap_in_region);
 
-  _active_regions.clear_bit(swap_out_slot);
-  _active_regions.set_bit(swap_in_slot);
+  _active_regions.current().clear_bit(swap_out_slot);
+  _active_regions.current().set_bit(swap_in_slot);
   swap_out_region.slot(-1);
   swap_in_region.slot(hardware_slot);
 
-  Mpu::dump();
+//  Mpu::dump();
 
   return true;
 }
@@ -550,16 +562,16 @@ bool Mpu::check_and_handle_multiplex_fault(Mword address)
 IMPLEMENT static inline
 void Mpu::flush_cache()
 {
-  _active_regions.clear_all();
-  _pinned_regions.set_first_bits(4);
-  _virtual_regions.clear();
+  _active_regions.current().clear_all();
+  _pinned_regions.current().set_first_bits(4);
+  _virtual_regions.current().clear();
 }
 
 IMPLEMENT static inline
 unsigned Mpu::regions()
 {
   return mpultiplex_enabled()
-    ? _virtual_regions.size() : Config::Mpultiplex_block_size;
+    ? _virtual_regions.current().size() : Config::Mpultiplex_block_size;
 }
 
 #include "ansi.h"
@@ -573,9 +585,9 @@ void Mpu::dump()
   printf(ANSI("  %16s - [%*s..%*s, enabled|mem type, rights]@slot[in hw] - multiplex state\n", BOLD),
          "label", -pad, "start", pad, "end");
 
-  for (unsigned i = 0; i < _virtual_regions.size(); ++i)
+  for (unsigned i = 0; i < _virtual_regions.current().size(); ++i)
     {
-      auto const &region = _virtual_regions[i];
+      auto const &region = _virtual_regions.current()[i];
       auto attr = region.attr();
       //          FORMAT STR         DELIMITER STR
       ansi_printf("  %16s "          ANSI("- [", DIM) ""     // label
@@ -599,8 +611,8 @@ void Mpu::dump()
                   (attr.rights() & L4_fpage::Rights::W()) ? 'W' : '-',
                   (attr.rights() & L4_fpage::Rights::X()) ? 'X' : '-',
                   i, region.slot(),
-                  _active_regions[i] ? "active" : "cached",
-                  _pinned_regions[i] ? "pinned" : "");
+                  _active_regions.current()[i] ? "active" : "cached",
+                  _pinned_regions.current()[i] ? "pinned" : "");
     }
   printf("\n");
 }

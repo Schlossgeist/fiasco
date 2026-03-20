@@ -81,6 +81,8 @@ App_cpu_thread::bootstrap(Mword resume)
       Cpu::cpus.current().set_online();
     }
 
+  Mpu::init_mpultiplex(ccpu);
+
   // Release _tramp_mp_spinlock without releasing CPU lock.
   _tramp_mp_spinlock.set(1);
 
