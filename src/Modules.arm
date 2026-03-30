@@ -215,8 +215,8 @@ NOOPT			+= tb_entry tb_entry_output
 # LIBK subsystem
 #
 INTERFACES_LIBK	+= scaler_shift
-ifeq ($(CONFIG_BIT32),y)
 CSRC_LIBK       += gcc_lib.c
+ifeq ($(CONFIG_BIT32),y)
 ASSRC_LIBK      += gcc_lib-aeabi.S
 endif
 PREPROCESS_PARTS-$(if $(CONFIG_ARM_V6PLUS),,y) += generic_atomic generic_local_atomic

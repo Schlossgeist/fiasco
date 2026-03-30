@@ -402,3 +402,56 @@ int __clzdi2(unsigned long val)
   else
     return __clzsi2(val & 0xffffffffU);
 }
+
+
+int __popcountsi2(unsigned val);
+int __popcountdi2(unsigned long val);
+
+/**
+ * Return the number of bits set in `val`.
+ * Required by gcc for __builtin_popcount().
+ *
+ * \param[in] val  Value
+ *
+ * \return Number of bits set in `val`.
+ */
+int __popcountsi2(unsigned val)
+{
+  // EXAMPLE: 0b10110001 -> popcount == 4
+  if (sizeof(unsigned) == 4)
+    {
+      //     val == 0b00010001  +  val == 0b01010000         ==    0b01100001
+      val = (val & 0x55555555u) + (val >>  1 & 0x55555555u); // 0b...01010101
+
+      //     val == 0b00100001  +  val == 0b00010000         ==    0b00110001
+      val = (val & 0x33333333u) + (val >>  2 & 0x33333333u); // 0b...00110011
+
+      //     val == 0b00000001  +  val == 0b00000011         ==    0b00000100
+      val = (val & 0x0f0f0f0fu) + (val >>  4 & 0x0f0f0f0fu); // 0b...00001111
+
+      //     val == 0b00000100  +  val == 0b00000000         ==    0b00000100
+      val = (val & 0x00ff00ffu) + (val >>  8 & 0x00ff00ffu); // 0b...11111111
+
+      //     val == 0b00000100  +  val == 0b00000000         ==    0b00000100
+      val = (val & 0x0000ffffu) + (val >> 16 & 0x0000ffffu); // ...
+      return val;
+    }
+  else
+    return __popcountdi2(val);
+}
+
+/**
+ * Return the number of bits set in `val`.
+ * Required by gcc for __builtin_popcountl().
+ *
+ * \param[in] val  Value
+ *
+ * \return Number of bits set in `val`.
+ */
+int __popcountdi2(unsigned long val)
+{
+  int count = 0;
+  for (; val; ++count)
+    val &= val - 1;
+  return count;
+}
