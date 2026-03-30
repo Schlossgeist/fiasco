@@ -542,15 +542,15 @@ Mpu::hardware_regions()
 IMPLEMENT static
 void
 Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
-          bool inplace)
+          bool inplace, bool bypass_cache)
 {
-  if (false && Mpu::mpultiplex_enabled())
+  if (false && !bypass_cache && Mpu::mpultiplex_enabled())
     {
       printf("----------------------------------------------------------------------\n");
       regions.dump();
     }
 
-  if (Mpu::mpultiplex_enabled())
+  if (!bypass_cache && Mpu::mpultiplex_enabled())
     {
       if (regions.size() > Mpu::regions())
         Mpu::expand_virtual_regions(regions.size());
@@ -559,7 +559,7 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
   unsigned i = 0;
   while (i < touched.size() && (i = touched.ffs(i)))
     {
-      if (mpultiplex_enabled())
+      if (!bypass_cache && mpultiplex_enabled())
         {
           Mpu_region_base const &r = regions[i - 1];
           _virtual_regions[i - 1] = r;
@@ -585,19 +585,21 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
           Mpu_arm::prbar(regions[i - 1].prbar);
           Mpu_arm::prlar(regions[i - 1].prlar);
 
-          if (mpultiplex_enabled())
+          if (!bypass_cache && mpultiplex_enabled())
             {
               _virtual_regions[i - 1].slot(i - 1);
               _active_regions.set_bit(i - 1);
             }
-          invariant(hardware_regions() >= _active_regions.popcount());
+
+          if (!bypass_cache)
+            invariant(hardware_regions() >= _active_regions.popcount());
         }
     }
 
   // PRSELR must be 0 because it's assumed by kernel entry/exit code!
   Mpu_arm::prselr(0);
 
-  if (false && Mpu::mpultiplex_enabled())
+  if (false && !bypass_cache && Mpu::mpultiplex_enabled())
     {
       INFO("Sync");
 
