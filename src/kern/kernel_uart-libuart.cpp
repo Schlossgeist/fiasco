@@ -99,25 +99,25 @@ bool Kernel_uart::startup(unsigned, int irq, bool resume)
                   if (resume)
                     r = regs->mem;
                   else
-                    r = regs->mem.construct(Kmem_mmio::map(base, size), shift);
+                    r = regs->mem.construct(Kmem_mmio::map(base, size, Kmem_mmio::Map_attr(0), true), shift);
                   break;
                 case 1: // 1 bit shift, assume fixed 16bit access width
                   if (resume)
                     r = regs->mem16;
                   else
-                    r = regs->mem16.construct(Kmem_mmio::map(base, size), shift);
+                    r = regs->mem16.construct(Kmem_mmio::map(base, size, Kmem_mmio::Map_attr(0), true), shift);
                   break;
                 case 2: // 2 bit shift, assume fixed 32bit access width
                   if (resume)
                     r = regs->mem32;
                   else
-                    r = regs->mem32.construct(Kmem_mmio::map(base, size), shift);
+                    r = regs->mem32.construct(Kmem_mmio::map(base, size, Kmem_mmio::Map_attr(0), true), shift);
                   break;
                 case 3: // 3 bit shift, assume fixed 64bit access width
                   if (resume)
                     r = regs->mem64;
                   else
-                    r = regs->mem64.construct(Kmem_mmio::map(base, size), shift);
+                    r = regs->mem64.construct(Kmem_mmio::map(base, size, Kmem_mmio::Map_attr(0), true), shift);
                   break;
                 default:
                   panic("UART: illegal reg shift value: %d",

@@ -26,7 +26,7 @@ public:
     constexpr bool is_buffered() const { return _v & 0x4; }
   };
 
-  static void *map(Address phys, size_t size, Map_attr = Map_attr(0));
+  static void *map(Address phys, size_t size, Map_attr = Map_attr(0), bool bypass_mpultiplex = false);
   static void unmap(void *ptr, size_t size);
 };
 
@@ -292,7 +292,7 @@ Kmem_mmio::map_extent(Address phys_adj, uintptr_t virt, size_t size_adj,
  */
 IMPLEMENT_DEFAULT
 void *
-Kmem_mmio::map(Address phys, size_t size, Map_attr map_attr)
+Kmem_mmio::map(Address phys, size_t size, Map_attr map_attr, bool bypass_mpultiplex)
 {
   auto guard = lock_guard(&lock);
 

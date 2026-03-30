@@ -5,7 +5,7 @@ IMPLEMENTATION [arm && mpu]:
 
 IMPLEMENT_DEFAULT
 void *
-Kmem_mmio::map(Address phys, size_t size, Map_attr map_attr)
+Kmem_mmio::map(Address phys, size_t size, Map_attr map_attr, bool bypass_mpultiplex)
 {
   // Arm MPU regions must be aligned to 64 bytes
   Address start = phys & ~63UL;
@@ -24,7 +24,7 @@ Kmem_mmio::map(Address phys, size_t size, Map_attr map_attr)
                                  false),    // ku_mem
     true, -1, "MMIO");
   assert(diff);
-  Mpu::sync(*Kmem::kdir, diff.value());
+  Mpu::sync(*Kmem::kdir, diff.value(), false, bypass_mpultiplex);
   Mem::isb();
 
   return reinterpret_cast<void *>(phys);

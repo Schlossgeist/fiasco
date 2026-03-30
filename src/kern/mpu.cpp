@@ -380,13 +380,14 @@ public:
   /**
    * Write back changes to hardware.
    *
-   * \param regions  The Mpu_regions object that was updated.
-   * \param touched  Impacted regions.
-   * \param inplace  Update region directly instead of performing a safe
-   *                 disable-update-enable sequence.
+   * \param regions         The Mpu_regions object that was updated.
+   * \param touched         Impacted regions.
+   * \param inplace         Update region directly instead of performing a safe
+   *                        disable-update-enable sequence.
+   * \param bypass_cache    Do not cache this operation for MPU multiplexing.
    */
   static void sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
-                   bool inplace = false);
+                   bool inplace = false, bool bypass_cache = false);
 
   /**
    * Update MPU with new regions list.

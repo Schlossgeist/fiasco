@@ -37,7 +37,9 @@ setup_mpu()
   // as the MPU might already be used if the platform default background
   // region is not suitable.
   Mpu::init();
-  Mpu::sync(kmpu, diff.value(), true);
+  // also bypass the MPUltiplex subsystem as it is not active at the time
+  // this function is called
+  Mpu::sync(kmpu, diff.value(), true, true);
   if (!Mpu::enabled())
     Mmu::inv_cache();
   Cpu::init_sctlr();
