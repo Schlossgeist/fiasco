@@ -37,7 +37,9 @@ setup_mpu()
   // as the MPU might already be used if the platform default background
   // region is not suitable.
   Mpu::init();
+  printf("BEFORE MPU SETUP SYNC\n");
   Mpu::sync(kmpu, diff.value(), true);
+  printf("AFTER MPU SETUP SYNC\n");
   if (!Mpu::enabled())
     Mmu::inv_cache();
   Cpu::init_sctlr();

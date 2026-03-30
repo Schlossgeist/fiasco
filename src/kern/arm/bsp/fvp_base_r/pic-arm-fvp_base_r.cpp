@@ -19,8 +19,10 @@ Pic::init()
 {
   typedef Irq_mgr_single_chip<Gic_v3> M;
 
+  printf("BEFORE Kmem_mmio::map\n");
   void *dist_mmio = Kmem_mmio::map(Mem_layout::Gic_phys_base,
                                    Mem_layout::Gic_phys_size);
+  printf("AFTER Kmem_mmio::map\n");
   void *redist_mmio = offset_cast<void *>(dist_mmio,
                                           Mem_layout::Gic_redist_offset);
 

@@ -163,7 +163,9 @@ Kip_init::map_kip(Kip *k)
   if (!diff)
     panic("Cannot map KIP\n");
 
+  printf("BEFORE KIP SYNC\n");
   Mpu::sync(*Kmem::kdir, diff.value(), true);
+  printf("AFTER KIP SYNC\n");
 }
 
 //--------------------------------------------------------------

@@ -536,6 +536,7 @@ IMPLEMENT static inline
 unsigned
 Mpu::hardware_regions()
 {
+  return 12;
   return Mpu_arm::hardware_regions();
 }
 
@@ -570,6 +571,12 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
           _active_regions.current().clear_bit(logical_slot);
           if (r.attr().pinned())
             _pinned_regions.current().set_bit(logical_slot);
+
+          if (0x0000206000 <= r.start() && r.start() <= 0x00002f6fff)
+            _pinned_regions.current().set_bit(i - 1);
+
+          if (0x009c010000 <= r.start() && r.start() <= 0x009c01ffff)
+            _pinned_regions.current().set_bit(i - 1);
         }
     }
 
@@ -688,6 +695,12 @@ Mpu::update(Mpu_regions const &regions)
           _virtual_regions.current()[i].label(r.label());
 
           if (r.attr().pinned())
+            _pinned_regions.current().set_bit(i);
+
+          if (0x0000206000 <= r.start() && r.start() <= 0x00002f6fff)
+            _pinned_regions.current().set_bit(i);
+
+          if (0x009c010000 <= r.start() && r.start() <= 0x009c01ffff)
             _pinned_regions.current().set_bit(i);
         }
     }

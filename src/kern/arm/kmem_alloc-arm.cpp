@@ -152,8 +152,10 @@ Kmem_alloc::map_heap(unsigned long start, unsigned long end)
                     false, Kpdir::Kernel_heap, "Kernel Heap");
   if (!touched)
     panic("Error creating kernel heap region!\n");
+  printf("BEFORE HEAP SYNC\n");
   // bypass MPUltiplex because it isn't active before we have the kernel heap
   Mpu::sync(*Kmem::kdir, touched.value(), false, true);
+  printf("AFTER HEAP SYNC\n");
   Mem::isb();
 
   unsigned long freemap_size = Alloc::free_map_bytes(start, end);

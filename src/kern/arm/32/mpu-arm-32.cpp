@@ -859,6 +859,7 @@ Mpu_region_base::disable()
 IMPLEMENT static inline
 unsigned Mpu::hardware_regions()
 {
+  return 12;
   return Mpu_arm::hardware_regions();
 }
 

@@ -62,7 +62,11 @@ Startup::stage2()
   Kernel_task::init();
   Mem_space::kernel_space(Kernel_task::kernel_task());
   Cpu::cpus.cpu(boot_cpu).init(false, true);
+
+  printf("BEFORE Pic::init()\n");
   Pic::init();
+  printf("AFTER Pic::init()\n");
+
   Thread::init_per_cpu(boot_cpu, false);
 
   Platform_control::init(boot_cpu);

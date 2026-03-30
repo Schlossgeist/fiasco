@@ -492,6 +492,7 @@ void Mpu::expand_virtual_regions(size_t new_size)
 IMPLEMENT static inline NEEDS[<cstdlib>]
 bool Mpu::check_and_handle_multiplex_fault(Mword address)
 {
+  // printf("CHECKING MPULTIPLEX FAULT FOR " L4_MWORD_FMT ":\n", address);
   int swap_in_slot = -1;
   for (unsigned i = 0; i < _virtual_regions.current().size(); ++i)
     if (_virtual_regions.current()[i].contains(address))
@@ -545,6 +546,13 @@ void Mpu::swap_slots(Virt_slot victim_slot, Virt_slot swap_slot)
   invariant(3 < hardware_slot);
   invariant(hardware_slot < static_cast<int>(Mpu::hardware_regions()));
 
+//  INFO("Swapped region in slot %d [" L4_MWORD_FMT ".." L4_MWORD_FMT "]\n\t"
+//       "for region in slot %d [" L4_MWORD_FMT ".." L4_MWORD_FMT "]\n\t"
+//       "via hardware slot %d.\n",
+//       victim_slot, victim_region.start(), victim_region.end(),
+//       swap_slot, swap_region.start(), swap_region.end(),
+//       hardware_slot);
+
   Mpu::swap(hardware_slot, swap_region);
 
   _active_regions.current().clear_bit(victim_slot);
@@ -573,6 +581,15 @@ Unsigned32 Mpu::get_current_ku_mem()
       if (r.attr().ku_mem())
         result |= 1 << r.slot();
     }
+
+//  printf("CURRENT KU_MEM MASK: [");
+//  for (unsigned i = 0; i < 32; ++i)
+//    {
+//      if (i != 0 && i % 8 == 0)
+//        printf(" ");
+//      printf("%d", result & (1 << i) ? 1 : 0);
+//    }
+//  printf(">\n");
 
   return result;
 }

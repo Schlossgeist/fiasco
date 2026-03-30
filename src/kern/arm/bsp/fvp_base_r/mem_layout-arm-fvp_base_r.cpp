@@ -16,6 +16,6 @@ public:
 
     // Actually 32 regions on EL1 and EL2 but we can only handle 31 efficiently
     // at the moment.
-    Mpu_regions = 31,
+    Mpu_regions = 12,
   };
 };

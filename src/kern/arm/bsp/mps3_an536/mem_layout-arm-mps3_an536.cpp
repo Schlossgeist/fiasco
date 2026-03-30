@@ -11,5 +11,5 @@ public:
     Gic_redist_size   =   0x100000,
   };
 
-  enum Mpu_layout { Mpu_regions = 24 };
+  enum Mpu_layout { Mpu_regions = 12 };
 };
