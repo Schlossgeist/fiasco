@@ -358,6 +358,12 @@ public:
   static void flush_cache();
 
   /**
+   * Get the locations of the MPU hardware slots currently used for
+   * kernel-user memory mapping.
+   */
+  static Unsigned32 get_current_ku_mem();
+
+  /**
    * Write back changes to hardware.
    *
    * \param regions         The Mpu_regions object that was updated.
@@ -525,6 +531,22 @@ void Mpu::flush_cache()
   _active_regions.current().clear_all();
   _pinned_regions.current().set_first_bits(4);
   _virtual_regions.current().clear();
+}
+
+IMPLEMENT static inline
+Unsigned32 Mpu::get_current_ku_mem()
+{
+  Unsigned32 result = 0;
+
+  unsigned i = 0;
+  while (i < _active_regions.current().size() && (i = _active_regions.current().ffs(i)))
+    {
+      auto const &r = _virtual_regions.current()[i - 1];
+      if (r.attr().ku_mem())
+        result |= 1 << r.slot();
+    }
+
+  return result;
 }
 
 IMPLEMENT static inline
