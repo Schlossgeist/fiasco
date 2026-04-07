@@ -19,14 +19,22 @@ class Mpu_region_attr
 {
   L4_fpage::Rights _rights;
   L4_snd_item::Memory_type _type;
-  bool _enabled;
-  bool _pinned;
+
+  // only add up to 8 attribute flags
+  enum Flags {
+    Enabled     = 1 << 0,
+    Pinned      = 1 << 1,
+  };
+  Unsigned8 _flags = 0;
 
   constexpr Mpu_region_attr(L4_fpage::Rights rights,
                             L4_snd_item::Memory_type type,
                             bool enabled, bool pinned)
-  : _rights(rights), _type(type), _enabled(enabled), _pinned(pinned)
-  {}
+  : _rights(rights), _type(type)
+  {
+    _flags |= enabled ? Enabled   : 0;
+    _flags |= pinned  ? Pinned    : 0;
+  }
 
 public:
   Mpu_region_attr() = default;
@@ -44,8 +52,8 @@ public:
 
   constexpr L4_fpage::Rights rights() const { return _rights; }
   constexpr L4_snd_item::Memory_type type() const { return _type; }
-  constexpr bool enabled() const { return _enabled; }
-  constexpr bool pinned() const { return _pinned; }
+  constexpr bool enabled() const { return _flags & Enabled; }
+  constexpr bool pinned() const { return _flags & Pinned; }
 
   inline void add_rights(L4_fpage::Rights rights)
   {
