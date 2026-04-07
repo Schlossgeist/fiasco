@@ -451,9 +451,10 @@ Mem_space::v_insert([[maybe_unused]] Phys_addr phys,
   Mword start = cxx::int_value<Virt_addr>(Virt_addr(virt));
   Mword end = start + (1UL << Page_order::val(order)) - 1U;
   Mpu_region_attr attr = Mpu_region_attr::make_attr(page_attribs.rights,
-                                                    page_attribs.type,
-                                                    !ku_mem,    // enabled
-                                                    ku_mem);    // pinned
+                                                      page_attribs.type,
+                                                      !ku_mem,  // enabled
+                                                      ku_mem,   // pinned
+                                                      ku_mem);  // ku_mem
   Mem_space::Status ret = Insert_ok;
 
   auto guard = lock_guard(_lock);
