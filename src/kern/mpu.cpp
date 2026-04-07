@@ -31,17 +31,12 @@ class Mpu_region_attr
 public:
   Mpu_region_attr() = default;
 
-  constexpr bool operator == (Mpu_region_attr const &other)
+  constexpr bool operator == (Mpu_region_attr const &other) const
   {
     return    _rights  == other._rights
            && _type    == other._type
            && _enabled == other._enabled
            && _pinned  == other._pinned;
-  }
-
-  constexpr bool operator != (Mpu_region_attr const &other)
-  {
-    return !operator==(other);
   }
 
   static constexpr Mpu_region_attr
