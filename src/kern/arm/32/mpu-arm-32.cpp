@@ -779,6 +779,7 @@ Mpu_region_base::Mpu_region_base(Mword start, Mword end, Mpu_region_attr a)
 {
   attr(a);
   pinned = a.pinned();
+  ku_mem = a.ku_mem();
 }
 
 IMPLEMENT constexpr
@@ -809,7 +810,7 @@ Mpu_region_base::attr() const
                 ? L4_snd_item::Memory_type::Uncached()
                 : L4_snd_item::Memory_type::Buffered()),
             prlar & Enabled,
-            pinned);
+            pinned, ku_mem);
 }
 
 IMPLEMENT inline
@@ -842,6 +843,7 @@ Mpu_region_base::attr(Mpu_region_attr attr)
                   : Attr::Normal))
           | (attr.enabled() ? Enabled : Disabled);
   pinned = attr.pinned();
+  ku_mem = attr.ku_mem();
 }
 
 IMPLEMENT inline

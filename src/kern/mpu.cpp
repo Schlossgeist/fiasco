@@ -24,16 +24,18 @@ class Mpu_region_attr
   enum Flags {
     Enabled     = 1 << 0,
     Pinned      = 1 << 1,
+    Is_ku_mem   = 1 << 2,
   };
   Unsigned8 _flags = 0;
 
   constexpr Mpu_region_attr(L4_fpage::Rights rights,
                             L4_snd_item::Memory_type type,
-                            bool enabled, bool pinned)
+                            bool enabled, bool pinned, bool ku_mem)
   : _rights(rights), _type(type)
   {
     _flags |= enabled ? Enabled   : 0;
     _flags |= pinned  ? Pinned    : 0;
+    _flags |= ku_mem  ? Is_ku_mem : 0;
   }
 
 public:
@@ -45,15 +47,16 @@ public:
   static constexpr Mpu_region_attr
   make_attr(L4_fpage::Rights rights,
             L4_snd_item::Memory_type type = L4_snd_item::Memory_type::Normal(),
-            bool enabled = true, bool pinned = false)
+            bool enabled = true, bool pinned = false, bool ku_mem = false)
   {
-    return Mpu_region_attr(rights, type, enabled, pinned);
+    return Mpu_region_attr(rights, type, enabled, pinned, ku_mem);
   }
 
   constexpr L4_fpage::Rights rights() const { return _rights; }
   constexpr L4_snd_item::Memory_type type() const { return _type; }
   constexpr bool enabled() const { return _flags & Enabled; }
   constexpr bool pinned() const { return _flags & Pinned; }
+  constexpr bool ku_mem() const { return _flags & Is_ku_mem; }
 
   inline void add_rights(L4_fpage::Rights rights)
   {
@@ -109,6 +112,7 @@ struct Mpu_region_base
 private:
   Label_buffer _label = {0};
   bool pinned = false;
+  bool ku_mem = false;
 };
 
 /**
