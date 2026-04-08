@@ -554,23 +554,28 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
     {
       if (regions.size() > Mpu::regions())
         Mpu::expand_virtual_regions(regions.size());
+
+      // update cache
+      unsigned i = 0;
+      while (i < touched.size() && (i = touched.ffs(i)))
+        {
+          Virt_slot const logical_slot  = i - 1;
+          Phys_slot const hardware_slot = _virtual_regions.current()[logical_slot].slot();
+
+          Mpu_region_base const &r = regions[logical_slot];
+          _virtual_regions.current()[logical_slot] = r;
+          _virtual_regions.current()[logical_slot].slot(hardware_slot);
+          _virtual_regions.current()[logical_slot].label(r.label());
+
+          _active_regions.current().clear_bit(logical_slot);
+          if (r.attr().pinned())
+            _pinned_regions.current().set_bit(logical_slot);
+        }
     }
 
   unsigned i = 0;
   while (i < touched.size() && (i = touched.ffs(i)))
     {
-      if (!bypass_cache && mpultiplex_enabled())
-        {
-          Mpu_region_base const &r = regions[i - 1];
-          _virtual_regions.current()[i - 1] = r;
-          _virtual_regions.current()[i - 1].label(r.label());
-
-          _active_regions.current().clear_bit(i - 1);
-
-          if (r.attr().pinned())
-            _pinned_regions.current().set_bit(i - 1);
-        }
-
       if (i - 1 < Mpu::hardware_regions())
         {
           Mpu_arm::prselr(i - 1);
@@ -590,10 +595,13 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
               _virtual_regions.current()[i - 1].slot(i - 1);
               _active_regions.current().set_bit(i - 1);
             }
-
-          if (!bypass_cache)
-            invariant(hardware_regions() >= _active_regions.current().popcount());
         }
+    }
+
+  if (!bypass_cache && Mpu::mpultiplex_enabled())
+    {
+      // Mpu::dump();
+      invariant(hardware_regions() >= _active_regions.current().popcount());
     }
 
   // PRSELR must be 0 because it's assumed by kernel entry/exit code!
