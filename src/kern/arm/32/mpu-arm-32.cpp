@@ -899,9 +899,26 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
   unsigned i = 0;
   while (i < touched.size() && (i = touched.ffs(i)))
     {
-      if (i - 1 < Mpu::hardware_regions())
+      Virt_slot const logical_slot   = i - 1;
+      Phys_slot       hardware_slot  = i - 1;
+
+      if (!bypass_cache && mpultiplex_enabled())
         {
-          Mpu_arm::prselr(i - 1);
+          // check if the region is already active but in a hardware slot
+          // that differs from its logical slot
+          auto const &touched_region = _virtual_regions.current()[logical_slot];
+          if (touched_region.is_active())
+            hardware_slot = touched_region.slot();
+          else if (_active_regions.current().popcount() == Mpu::hardware_regions())
+            {
+              Mpu::swap_slots(Mpu::find_slot_for_swap(), i - 1);
+              continue;
+            }
+        }
+
+      if (hardware_slot < Mpu::hardware_regions())
+        {
+          Mpu_arm::prselr(hardware_slot);
           Mem::isb();
           if (!inplace && (Mpu_arm::prlar() & Mpu_region_base::Enabled))
             {
@@ -911,20 +928,21 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
               Mem::isb();
             }
 
-          Mpu_arm::prbar(regions[i - 1].prbar);
-          Mpu_arm::prlar(regions[i - 1].prlar);
+          Mpu_arm::prbar(regions[logical_slot].prbar);
+          Mpu_arm::prlar(regions[logical_slot].prlar);
 
           if (!bypass_cache && mpultiplex_enabled())
             {
-              _virtual_regions.current()[i - 1].slot(i - 1);
-              _active_regions.current().set_bit(i - 1);
+              _virtual_regions.current()[logical_slot].slot(hardware_slot);
+              _active_regions.current().set_bit(logical_slot);
             }
         }
       // ensure that pinned regions are always active by
       // swaping them in if necessary
-      else if (!bypass_cache && mpultiplex_enabled() && _pinned_regions.current()[i - 1])
+      else if (!bypass_cache && mpultiplex_enabled()
+               && _pinned_regions.current()[logical_slot])
         {
-          Mpu::swap_slots(Mpu::find_slot_for_swap(), i - 1);
+          Mpu::swap_slots(Mpu::find_slot_for_swap(), logical_slot);
         }
     }
 
