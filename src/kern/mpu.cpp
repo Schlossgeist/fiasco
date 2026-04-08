@@ -437,7 +437,24 @@ private:
   using Virt_slot = int;
   using Phys_slot = unsigned;
 
-  static void swap(unsigned victim_slot, Cached_mpu_region const &region,
+  /**
+   * Implements the strategy for finding a slot for swapping.
+   *
+   * \return The number of the virtual MPU region slot that has been chosen
+   *         for replacement.
+   */
+  static Virt_slot find_slot_for_swap();
+
+  /**
+   * Swaps in a slot at the place of the victim slot and also updates
+   * additional state like the Mpu_regions_masks.
+   */
+  static void swap_slots(Virt_slot victim_slot, Virt_slot swap_slot);
+
+  /**
+   * Does the actual swap. No other state is touched.
+   */
+  static void swap(Phys_slot victim_slot, Cached_mpu_region const &region,
                    bool inplace = false);
 
   // bitmask of cached regions that are currently active in the physical MPU
@@ -516,7 +533,6 @@ bool Mpu::check_and_handle_multiplex_fault(Mword address)
   Backing_storage  const &curr_virtual_regions = _virtual_regions.current();
 
   int swap_in_slot = -1;
-  int swap_out_slot = -1;
   for (unsigned i = 0; i < curr_virtual_regions.size(); ++i)
     if (curr_virtual_regions[i].contains(address))
       {
@@ -533,36 +549,48 @@ bool Mpu::check_and_handle_multiplex_fault(Mword address)
   // not a multiplex fault; bail out
   if (swap_in_slot < 0) return false;
 
-  Mpu_regions_mask available_regions = _active_regions.current();
-  available_regions &= ~_pinned_regions.current();
-
-  while (swap_out_slot = rand() % regions(), !available_regions[swap_out_slot])
-    ; // empty statement
-
-  Cached_mpu_region &swap_in_region = _virtual_regions.current()[swap_in_slot];
-  Cached_mpu_region &swap_out_region = _virtual_regions.current()[swap_out_slot];
-
-  const int hardware_slot = swap_out_region.slot();
-  invariant(3 < hardware_slot);
-  invariant(static_cast<unsigned>(hardware_slot) < hardware_regions());
-
-//  INFO("Swapped region in slot %d [" L4_MWORD_FMT ".." L4_MWORD_FMT "]\n\t"
-//       "for region in slot %d [" L4_MWORD_FMT ".." L4_MWORD_FMT "]\n\t"
-//       "via hardware slot %d.\n",
-//       swap_out_slot, swap_out_region.start(), swap_out_region.end(),
-//       swap_in_slot, swap_in_region.start(), swap_in_region.end(),
-//       hardware_slot);
-
-  Mpu::swap(hardware_slot, swap_in_region);
-
-  _active_regions.current().clear_bit(swap_out_slot);
-  _active_regions.current().set_bit(swap_in_slot);
-  swap_out_region.slot(-1);
-  swap_in_region.slot(hardware_slot);
-
+  int swap_out_slot = Mpu::find_slot_for_swap();
+  Mpu::swap_slots(swap_out_slot, swap_in_slot);
 //  Mpu::dump();
 
   return true;
+}
+
+IMPLEMENT static inline
+Mpu::Virt_slot Mpu::find_slot_for_swap()
+{
+  Mpu_regions_mask available_regions
+    = _active_regions.current() & ~_pinned_regions.current();
+
+  int swap_slot = -1;
+  while (swap_slot = rand() % Mpu::regions(), !available_regions[swap_slot])
+    ; // empty statement
+
+  postcondition(3 < swap_slot);
+  postcondition(swap_slot < static_cast<int>(Mpu::regions()));
+
+  return swap_slot;
+}
+
+IMPLEMENT static inline
+void Mpu::swap_slots(Virt_slot victim_slot, Virt_slot swap_slot)
+{
+  precondition(_active_regions.current()[victim_slot]);
+  precondition(!_active_regions.current()[swap_slot]);
+
+  Cached_mpu_region &swap_region = _virtual_regions.current()[swap_slot];
+  Cached_mpu_region &victim_region = _virtual_regions.current()[victim_slot];
+
+  const int hardware_slot = victim_region.slot();
+  invariant(3 < hardware_slot);
+  invariant(hardware_slot < static_cast<int>(Mpu::hardware_regions()));
+
+  Mpu::swap(hardware_slot, swap_region);
+
+  _active_regions.current().clear_bit(victim_slot);
+  _active_regions.current().set_bit(swap_slot);
+  victim_region.slot(-1);
+  swap_region.slot(hardware_slot);
 }
 
 IMPLEMENT static inline
