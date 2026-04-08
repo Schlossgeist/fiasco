@@ -932,7 +932,7 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
 
 IMPLEMENT static inline
 void
-Mpu::swap(unsigned victim_slot, Cached_mpu_region const &region, bool inplace)
+Mpu::swap(Phys_slot victim_slot, Cached_mpu_region const &region, bool inplace)
 {
   Mpu_arm::prselr(victim_slot);
   Mem::isb();
