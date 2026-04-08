@@ -920,6 +920,12 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
               _active_regions.current().set_bit(i - 1);
             }
         }
+      // ensure that pinned regions are always active by
+      // swaping them in if necessary
+      else if (!bypass_cache && mpultiplex_enabled() && _pinned_regions.current()[i - 1])
+        {
+          Mpu::swap_slots(Mpu::find_slot_for_swap(), i - 1);
+        }
     }
 
   if (!bypass_cache && Mpu::mpultiplex_enabled())
@@ -1060,6 +1066,19 @@ Mpu::update(Mpu_regions const &regions)
   // PRENR. Hence, all region updates must be already committed to not read
   // stale data through PRENR.
   Mem::isb();
+
+  if (Mpu::mpultiplex_enabled())
+    {
+      // During Mpu::update, virtual regions are put into physical slots
+      // 1-to-1, which means if there are more virtual regions than slots,
+      // there may be pinned regions in the overhanging virtual regions,
+      // which have to be swapped in explicitly.
+      auto pinned_but_inactive_regions
+        = _pinned_regions.current() & ~_active_regions.current();
+
+      if (!pinned_but_inactive_regions.is_empty())
+        Mpu::sync(regions, pinned_but_inactive_regions);
+    }
 
   if (false && Mpu::mpultiplex_enabled())
     {
