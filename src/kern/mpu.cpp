@@ -345,6 +345,9 @@ public:
 
   static bool check_and_handle_multiplex_fault(Mword address);
 
+  using Virt_slot = int;
+  using Phys_slot = unsigned;
+
   static void swap(unsigned victim_slot, Cached_mpu_region const &region,
                    bool inplace = false);
 
