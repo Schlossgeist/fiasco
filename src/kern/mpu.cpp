@@ -162,6 +162,10 @@ public:
   : Dynamic_bitmap(size, Mpu::allocator)
   { clear_all(); }
 
+  Mpu_regions_mask(Dynamic_bitmap const &o)
+  : Dynamic_bitmap(o)
+  {}
+
   // Required to make it compatible with Mpu_regions_update::Updates
   using Dynamic_bitmap<Mpu_allocator>::operator=;
 };
