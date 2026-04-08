@@ -426,6 +426,9 @@ private:
 
 // === SWAPPING ===============================================================
 
+  using Virt_slot = int;
+  using Phys_slot = unsigned;
+
   static void swap(unsigned victim_slot, Cached_mpu_region const &region,
                    bool inplace = false);
 
