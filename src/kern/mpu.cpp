@@ -154,6 +154,10 @@ public:
   : Bitmap_type(size, Mpu_allocator())
   { clear_all(); }
 
+  Mpu_regions_mask(Bitmap_type const &o)
+  : Bitmap_type(o)
+  {}
+
   // Required to make it compatible with Mpu_regions_update::Updates
   using Bitmap_type::operator=;
 };
