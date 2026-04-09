@@ -562,10 +562,10 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
           Virt_slot const logical_slot  = i - 1;
           Phys_slot const hardware_slot = _virtual_regions.current()[logical_slot].slot();
 
-          Mpu_region_base const &r = regions[logical_slot];
+          auto r = Cached_mpu_region(regions[logical_slot], hardware_slot);
+          r.label(regions[logical_slot].label());
+
           _virtual_regions.current()[logical_slot] = r;
-          _virtual_regions.current()[logical_slot].slot(hardware_slot);
-          _virtual_regions.current()[logical_slot].label(r.label());
 
           _active_regions.current().clear_bit(logical_slot);
           if (r.attr().pinned())
