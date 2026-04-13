@@ -559,17 +559,30 @@ bool Mpu::check_and_handle_multiplex_fault(Mword address)
 IMPLEMENT static inline
 Mpu::Virt_slot Mpu::find_slot_for_swap()
 {
-  Mpu_regions_mask available_regions
+  Mpu_regions_mask const available_regions
     = _active_regions.current() & ~_pinned_regions.current();
+  int const max_regions = Mpu::regions();
 
-  int swap_slot = -1;
-  while (swap_slot = rand() % Mpu::regions(), !available_regions[swap_slot])
-    ; // empty statement
+  invariant(available_regions.popcount() > 0);
 
-  postcondition(3 < swap_slot);
-  postcondition(swap_slot < static_cast<int>(Mpu::regions()));
+  auto wrap_around = [max_regions](int start, int offset) -> int
+    {
+      int const result = (start + offset) % max_regions;
+      return result < 0 ? result + max_regions
+                        : result;
+    };
 
-  return swap_slot;
+  int const start_slot = rand() % max_regions;
+  for (int offset = 0, target_slot; offset < max_regions; ++offset)
+    {
+      target_slot = wrap_around(start_slot, +offset);
+      if (available_regions[target_slot]) return target_slot;
+
+      target_slot = wrap_around(start_slot, -offset);
+      if (available_regions[target_slot]) return target_slot;
+    }
+
+  panic("Could not find a slot for swapping!");
 }
 
 IMPLEMENT static inline
