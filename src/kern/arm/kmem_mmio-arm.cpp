@@ -20,7 +20,7 @@ Kmem_mmio::map(Address phys, size_t size, Map_attr map_attr, bool bypass_mpultip
                                  ? L4_snd_item::Memory_type::Normal()
                                  : L4_snd_item::Memory_type::Uncached(),
                                  true,      // enabled
-                                 true,      // pinned
+                                 false,     // pinned
                                  false),    // ku_mem
     true, -1, "MMIO");
   assert(diff);

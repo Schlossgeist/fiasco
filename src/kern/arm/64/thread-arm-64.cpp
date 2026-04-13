@@ -97,6 +97,9 @@ Thread::arm_kernel_sync_entry(Trap_state *ts)
       if (is_transient_mpu_fault(ts, esr))
         return;
 
+      if (Mpu::check_and_handle_multiplex_fault(ts->pf_address))
+        return;
+
       if (!PF::is_read_error(esr.raw()) && is_permission_fault(esr.raw()))
         {
           ts->dump();
