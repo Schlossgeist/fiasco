@@ -105,6 +105,13 @@ using Bitmap_type = Dynamic_bitmap<Config::Mpultiplex_block_size, Mpu_allocator>
 class Mpu_regions;
 class Mpu_regions_mask;
 
+class IMpu_region_base_container
+{
+public:
+  virtual Mpu_region_base const &at(unsigned i) const = 0;
+  virtual ~IMpu_region_base_container() = default;
+};
+
 /**
  * Base for classes dealing with a growing number of MPU regions.
  *
