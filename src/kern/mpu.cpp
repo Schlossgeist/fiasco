@@ -1016,10 +1016,11 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
   if (!r)
     {
       auto new_size = reserve(size() * 2);
-      // WARNX(Info, "MPU regions size extended to %zu\n", new_size);
-
-      return add(start, end, attr, join, slot, label);
+      INFO("MPU regions size extended to %zu\n", new_size);
     }
+  // Search again because number of regions has increased.
+  r = find_free(slot);
+  assert(r);
 
   r->start(start);
   r->end(end);
