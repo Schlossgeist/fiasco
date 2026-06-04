@@ -627,6 +627,15 @@ config MPULTIPLEX_BLOCK_SIZE
 	  Setting this to a sufficiently high value will effectively minimize the
 	  amount of memory that is dynamically allocated. 
 
+config MPULTIPLEX_DEBUG_LABELS
+	bool "Enable MPU region labels for debugging purposes"
+	default n
+	depends on MPULTIPLEX
+	help
+	  Adds a "label" column to debugging functions like Mpu_regions::dump.
+	  The label allows to trace the origin of a given region, i.e. whether
+	  it is the Kernel Text or Heap, the KIP, a regular insert, etc.
+
 config ARM_FAST_INTERRUPTS
 	bool "Enable low latency interrupt optimization"
 	depends on ARM_V8 && ARM_PROFILE_R && CPU_VIRT && BIT32

@@ -886,7 +886,9 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
           Phys_slot const hardware_slot = _virtual_regions.current()[logical_slot].slot();
 
           auto r = Cached_mpu_region(regions[logical_slot], hardware_slot);
+#if defined(CONFIG_MPULTIPLEX_DEBUG_LABELS)
           r.label(regions[logical_slot].label());
+#endif
 
           _virtual_regions.current()[logical_slot] = r;
 
@@ -1005,7 +1007,9 @@ Mpu::update(Mpu_regions const &regions)
         {
           Mpu_region_base const &r = regions[i];
           curr_virtual_regions[i] = r;
+#if defined(CONFIG_MPULTIPLEX_DEBUG_LABELS)
           curr_virtual_regions[i].label(r.label());
+#endif
 
           if (r.attr().pinned())
             _pinned_regions.current().set_bit(i);

@@ -79,21 +79,37 @@ public:
  */
 struct Mpu_region_base
 {
-  using Label_buffer = char[16];
-
   constexpr Mpu_region_base();
   Mpu_region_base(Mword start, Mword end, Mpu_region_attr a);
 
   constexpr Mword start() const;
   constexpr Mword end() const;
   constexpr Mpu_region_attr attr() const;
-  constexpr Label_buffer const& label() const
-  { return _label; }
 
   inline void start(Mword start);
   inline void end(Mword end);
   inline void attr(Mpu_region_attr attr);
   inline void disable();
+
+  friend bool operator < (Mpu_region_base const &lhs, Mpu_region_base const &rhs)
+  { return lhs.end() < rhs.start(); }
+
+  constexpr bool contains(Mword addr) const
+  { return start() <= addr && addr <= end(); }
+
+private:
+  bool pinned = false;
+  bool ku_mem = false;
+};
+
+INTERFACE [mpultiplex_debug_labels]:
+
+EXTENSION struct Mpu_region_base
+{
+public:
+  using Label_buffer = char[16];
+
+  constexpr Label_buffer const& label() const { return _label; }
   inline void label(const char *label)
   {
     const int buffer_end = sizeof(Label_buffer) - 1;
@@ -104,17 +120,11 @@ struct Mpu_region_base
 #pragma GCC diagnostic pop
   }
 
-  friend bool operator < (Mpu_region_base const &lhs, Mpu_region_base const &rhs)
-  { return lhs.end() < rhs.start(); }
-
-  constexpr bool contains(Mword addr) const
-  { return start() <= addr && addr <= end(); }
-
 private:
   Label_buffer _label = {0};
-  bool pinned = false;
-  bool ku_mem = false;
 };
+
+INTERFACE [mpu]:
 
 /**
  * A single MPU region stored inside the MPUltiplex cache.
@@ -666,7 +676,11 @@ void Mpu::dump()
                   "%-4u"             ANSI("[", DIM) ""       // slot
                   "%5d"              ANSI("] - ", DIM) ""    // hardware slot
                   "%s, %s\n",                                // multiplex state
+#if defined(CONFIG_MPULTIPLEX_DEBUG_LABELS)
                   region.label(),
+#else
+                  "not configured",
+#endif
                   region.start(),
                   region.end(),
                   attr.enabled() ? ANSI("yes", GREEN) : ANSI("no", RED),
@@ -850,7 +864,9 @@ public:
         r->start(i->start());
         r->end(i->end());
         r->attr(i->attr());
+#if defined(CONFIG_MPULTIPLEX_DEBUG_LABELS)
         r->label(i->label());
+#endif
       }
   }
 
@@ -950,6 +966,9 @@ Mpu_regions_update
 Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
                  int slot = -1, const char *label = "undefined")
 {
+  // silence "unused variable" warning with CONFIG_MPULTIPLEX_DEBUG_LABELS off
+  (void) label;
+
   // Find existing regions left and right of the new region. In case of a
   // collision the existing regions need to be extended and optimized.
   Mpu_region *left = nullptr;
@@ -1007,7 +1026,9 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
   // done in case we joined one of the existing regions
   if (r)
     {
+#if defined(CONFIG_MPULTIPLEX_DEBUG_LABELS)
       r->label(label);
+#endif
       return updates;
     }
 
@@ -1016,7 +1037,8 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
   if (!r)
     {
       auto new_size = reserve(size() * 2);
-      INFO("MPU regions size extended to %zu\n", new_size);
+      (void) new_size;
+      // INFO("MPU regions size extended to %zu\n", new_size);
     }
   // Search again because number of regions has increased.
   r = find_free(slot);
@@ -1035,7 +1057,9 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
     insert(r, Back, nullptr);
 
   updates.set_updated(index(r));
+#if defined(CONFIG_MPULTIPLEX_DEBUG_LABELS)
   r->label(label);
+#endif
   return updates;
 }
 
@@ -1188,7 +1212,11 @@ Mpu_regions::dump() const
                   "%cR%c%c"          ANSI("]@", DIM) ""      // rights
                   "%-4u"             ANSI(" - ", DIM) ""     // slot
                   "%s\n",                                    // status
+#if defined(CONFIG_MPULTIPLEX_DEBUG_LABELS)
                   region.label(),
+#else
+                  "not configured",
+#endif
                   region.start(),
                   region.end(),
                   attr.enabled() ? ANSI("yes", GREEN) : ANSI("no", RED),
