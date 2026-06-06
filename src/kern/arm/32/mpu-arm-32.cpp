@@ -878,23 +878,25 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
       if (regions.size() > Mpu::regions())
         Mpu::expand_virtual_regions(regions.size());
 
+      auto& curr_state = Mpu::state();
+
       // update cache
       unsigned i = 0;
       while (i < touched.size() && (i = touched.ffs(i)))
         {
           Virt_slot const logical_slot  = i - 1;
-          Phys_slot const hardware_slot = _virtual_regions.current()[logical_slot].slot();
+          Phys_slot const hardware_slot = curr_state.virtual_regions[logical_slot].slot();
 
           auto r = Cached_mpu_region(regions[logical_slot], hardware_slot);
 #if defined(CONFIG_MPULTIPLEX_DEBUG_LABELS)
           r.label(regions[logical_slot].label());
 #endif
 
-          _virtual_regions.current()[logical_slot] = r;
+          curr_state.virtual_regions[logical_slot] = r;
 
-          _active_regions.current().clear_bit(logical_slot);
+          curr_state.active_regions.clear_bit(logical_slot);
           if (r.attr().pinned())
-            _pinned_regions.current().set_bit(logical_slot);
+            curr_state.pinned_regions.set_bit(logical_slot);
         }
     }
 
@@ -906,12 +908,13 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
 
       if (!bypass_cache && mpultiplex_enabled())
         {
+          auto const& curr_state = Mpu::state();
           // check if the region is already active but in a hardware slot
           // that differs from its logical slot
-          auto const &touched_region = _virtual_regions.current()[logical_slot];
+          auto const &touched_region = curr_state.virtual_regions[logical_slot];
           if (touched_region.is_active())
             hardware_slot = touched_region.slot();
-          else if (_active_regions.current().popcount() == Mpu::hardware_regions())
+          else if (curr_state.active_regions.popcount() == Mpu::hardware_regions())
             {
               Mpu::swap_slots(Mpu::find_slot_for_swap(), i - 1);
               continue;
@@ -935,14 +938,15 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
 
           if (!bypass_cache && mpultiplex_enabled())
             {
-              _virtual_regions.current()[logical_slot].slot(hardware_slot);
-              _active_regions.current().set_bit(logical_slot);
+              auto& curr_state = Mpu::state();
+              curr_state.virtual_regions[logical_slot].slot(hardware_slot);
+              curr_state.active_regions.set_bit(logical_slot);
             }
         }
       // ensure that pinned regions are always active by
       // swaping them in if necessary
       else if (!bypass_cache && mpultiplex_enabled()
-               && _pinned_regions.current()[logical_slot])
+               && Mpu::state().pinned_regions[logical_slot])
         {
           Mpu::swap_slots(Mpu::find_slot_for_swap(), logical_slot);
         }
@@ -951,7 +955,7 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
   if (!bypass_cache && Mpu::mpultiplex_enabled())
     {
       // Mpu::dump();
-      invariant(hardware_regions() >= _active_regions.current().popcount());
+      invariant(hardware_regions() >= Mpu::state().active_regions.popcount());
     }
 
   if (false && !bypass_cache && Mpu::mpultiplex_enabled())
@@ -999,20 +1003,19 @@ Mpu::update(Mpu_regions const &regions)
       if (regions.size() > Mpu::regions())
         Mpu::expand_virtual_regions(regions.size());
 
+      auto& curr_state = Mpu::state();
+
       Mpu::flush_cache();
-
-      Backing_storage &curr_virtual_regions = _virtual_regions.current();
-
       for (unsigned i = 0; i < regions.size(); ++i)
         {
           Mpu_region_base const &r = regions[i];
-          curr_virtual_regions[i] = r;
+          curr_state.virtual_regions[i] = r;
 #if defined(CONFIG_MPULTIPLEX_DEBUG_LABELS)
-          curr_virtual_regions[i].label(r.label());
+          curr_state.virtual_regions[i].label(r.label());
 #endif
 
           if (r.attr().pinned())
-            _pinned_regions.current().set_bit(i);
+            curr_state.pinned_regions.set_bit(i);
         }
     }
 
@@ -1023,8 +1026,9 @@ Mpu::update(Mpu_regions const &regions)
   Mem::isb();
 
   IMpu_region_base_container const *actual_regions = &regions;
+  auto& curr_state = Mpu::state();
   if (Mpu::mpultiplex_enabled())
-    actual_regions = &_virtual_regions.current();
+    actual_regions = &curr_state.virtual_regions;
 
 #define UPDATE(i)                                         \
   do                                                      \
@@ -1036,10 +1040,10 @@ Mpu::update(Mpu_regions const &regions)
   while (false)
 
   unsigned real_size = min(hardware_regions(), regions.size());
-  _active_regions.current().set_first_bits(real_size);
+  curr_state.active_regions.set_first_bits(real_size);
 
   for (unsigned i = 0; i < real_size; ++i)
-    _virtual_regions.current()[i].slot(i);
+    curr_state.virtual_regions[i].slot(i);
 
   // Directly skip non-existing regions. We don't support more than 32 regions.
   static_assert(Mem_layout::Mpu_regions <= 32, "No more than 32 regions!");
@@ -1091,12 +1095,13 @@ Mpu::update(Mpu_regions const &regions)
 
   if (Mpu::mpultiplex_enabled())
     {
+      auto const& curr_state = Mpu::state();
       // During Mpu::update, virtual regions are put into physical slots
       // 1-to-1, which means if there are more virtual regions than slots,
       // there may be pinned regions in the overhanging virtual regions,
       // which have to be swapped in explicitly.
       auto pinned_but_inactive_regions
-        = _pinned_regions.current() & ~_active_regions.current();
+        = curr_state.pinned_regions & ~curr_state.active_regions;
 
       if (!pinned_but_inactive_regions.is_empty())
         Mpu::sync(regions, pinned_but_inactive_regions);
