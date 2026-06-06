@@ -880,6 +880,9 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
 
       auto& curr_state = Mpu::state();
 
+      const_cast<Mpu_regions &>(regions).prepare_for_write_to_hw();
+      curr_state.last_cached_mpu_regions = &regions;
+
       // update cache
       unsigned i = 0;
       while (i < touched.size() && (i = touched.ffs(i)))
@@ -1004,6 +1007,9 @@ Mpu::update(Mpu_regions const &regions)
         Mpu::expand_virtual_regions(regions.size());
 
       auto& curr_state = Mpu::state();
+
+      const_cast<Mpu_regions &>(regions).prepare_for_write_to_hw();
+      curr_state.last_cached_mpu_regions = &regions;
 
       Mpu::flush_cache();
       for (unsigned i = 0; i < regions.size(); ++i)
