@@ -81,6 +81,13 @@ mem_map(Space *from, L4_fpage const &fp_from,
 
   Mu::Auto_tlb_flush<Mem_space> tlb;
 
+  // 4th rights bit is used for region pinning in user space,
+  // but has to be translated because of different meaning in kernel space
+  if (fp_from.rights() & L4_fpage::Rights::U())
+    {
+      attribs.flags |= Page::Flags::Pinned();
+    }
+
   return map<Mem_space>(mapdb_mem.get(),
                         from, from, snd_addr,
                         Pfc(1) << so, to, to,

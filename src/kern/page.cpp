@@ -33,6 +33,7 @@ public:
     static constexpr Flags Referenced() { return Flags(1); }
     static constexpr Flags Dirty() { return Flags(2); }
     static constexpr Flags Touched() { return Referenced() | Dirty(); }
+    static constexpr Flags Pinned() { return Flags(4); }
   };
 
   struct Attr
@@ -64,6 +65,8 @@ public:
 
       if ((o.type & Type::Set()) == Type::Set())
         n.type = o.type & ~Type::Set();
+
+      n.flags |= o.flags;
 
       return n;
     }

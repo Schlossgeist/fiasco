@@ -455,10 +455,12 @@ Mem_space::v_insert([[maybe_unused]] Phys_addr phys,
   assert (cxx::is_zero(cxx::get_lsb(Virt_addr(virt), order)));
   Mword start = cxx::int_value<Virt_addr>(Virt_addr(virt));
   Mword end = start + (1UL << Page_order::val(order)) - 1U;
+
+  bool pinned = ku_mem || page_attribs.flags & Page::Flags::Pinned();
   Mpu_region_attr attr = Mpu_region_attr::make_attr(page_attribs.rights,
                                                     page_attribs.type,
                                                     !ku_mem,    // enabled
-                                                    ku_mem,     // pinned
+                                                    pinned,     // pinned
                                                     ku_mem);    // ku_mem
   Mem_space::Status ret = Insert_ok;
 
