@@ -580,9 +580,6 @@ Thread::do_kill()
   reset_reply_cap(Implicit_reply_cap_index);
 
   // If other threads want to send me IPC messages, abort these operations.
-  // IMPORTANT: After the following code block, the cpu lock must not be
-  //            released until the Thread_dead flag is set, otherwise new
-  //            senders can be enqueued in the sender list of the dying thread.
   {
     while (Sender *s = Sender::cast(sender_list()->first()))
       {

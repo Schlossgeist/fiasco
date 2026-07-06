@@ -731,7 +731,7 @@ bool
 Context::is_invalid(bool check_cpu_local = false) const
 {
   unsigned s = state(check_cpu_local);
-  return (s & Thread_dead);
+  return s & (Thread_dead | Thread_killed);
 }
 
 /**
