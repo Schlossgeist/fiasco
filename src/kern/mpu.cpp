@@ -102,6 +102,24 @@ private:
   bool ku_mem = false;
 };
 
+INTERFACE [mpultiplex_showdown]:
+
+EXTENSION struct Mpu_region_base
+{
+public:
+  constexpr short age() const
+  { return _age; }
+
+  inline void age(short age)
+  { _age = age; }
+
+   inline void age_up()
+   { if (_age < 999) _age++; }
+
+private:
+  short _age = 0;
+};
+
 INTERFACE [mpultiplex_debug_labels]:
 
 EXTENSION struct Mpu_region_base
@@ -506,6 +524,7 @@ void Mpu::init_mpultiplex(Cpu_number cpu)
   // includes Kernel Text, Kip, Kernel Heap and UART MMIO
   curr_state.pinned_regions.set_first_bits(4);
   new (&curr_state.virtual_regions) Backing_storage(Config::Mpultiplex_block_size);
+
   printf(ANSI("MPUltiplex subsystem", MAGENTA, BOLD)
          " initialized with "
          ANSI("block size of %u", RED, BOLD)
@@ -567,6 +586,85 @@ bool Mpu::check_and_handle_multiplex_fault(Mword address)
   return true;
 }
 
+IMPLEMENTATION [mpu && mpultiplex_showdown]:
+
+IMPLEMENT static inline
+Mpu::Virt_slot Mpu::find_slot_for_swap()
+{
+  auto& curr_state = Mpu::state();
+  Mpu_regions_mask const available_regions
+    = curr_state.active_regions & ~curr_state.pinned_regions;
+  int const max_regions = Mpu::regions();
+
+  invariant(available_regions.popcount() > 0);
+
+  auto wrap_around = [max_regions](int start, int offset) -> int
+    {
+      int const result = (start + offset) % max_regions;
+      return result < 0 ? result + max_regions
+                        : result;
+    };
+
+  // random seed + heuristic
+  // We start our search at a random seed, but extend our search range until
+  // we find N possible target slots.
+  // The metric measured by the heuristic is then used to decide which of
+  // the N candidates to choose.
+  constexpr int N = CONFIG_MPULTIPLEX_SHOWDOWN_N;
+  int target_slots[N];
+  for (int i = 0; i < N; ++i) target_slots[i] = -1;
+
+  int idx = 0;
+  int const start_slot = rand() % max_regions;
+
+  // pull 'offset = 0'-case out of loop to circumvent '+/- 0'-iteration
+  target_slots[idx] = start_slot;
+  if (available_regions[target_slots[idx]])
+    ++idx;
+
+  for (int offset = 1; offset < max_regions; ++offset)
+    {
+      target_slots[idx] = wrap_around(start_slot, +offset);
+      if (   available_regions[target_slots[idx]]
+          && ++idx >= N) break;
+
+      target_slots[idx] = wrap_around(start_slot, -offset);
+      if (   available_regions[target_slots[idx]]
+          && ++idx >= N) break;
+    }
+
+  // printf("CANDIDATES { %i", target_slots[0]);
+  // for (int i = 1; i < N; ++i) printf(", %i", target_slots[i]);
+  // printf(" }\n");
+
+  // use heuristic metric to find "best" candidate
+  int target_slot = target_slots[0];
+  auto current_best_metric = curr_state.virtual_regions[target_slot].age();
+  curr_state.virtual_regions[target_slot].age_up();
+  for (int i = 1; i < N; ++i)
+    {
+      if (target_slots[i] < 0) break;
+      if (auto metric = curr_state.virtual_regions[target_slots[i]].age();
+          metric < current_best_metric)
+        {
+          current_best_metric = metric;
+          target_slot = target_slots[i];
+        }
+      curr_state.virtual_regions[target_slots[i]].age_up();
+    }
+
+  curr_state.virtual_regions[target_slot].age_up();
+
+  // Mpu::dump();
+
+  if (target_slot > -1)
+    return target_slot;
+
+  panic("Could not find a slot for swapping!");
+}
+
+IMPLEMENTATION [mpu && !mpultiplex_showdown]:
+
 IMPLEMENT static inline
 Mpu::Virt_slot Mpu::find_slot_for_swap()
 {
@@ -596,6 +694,8 @@ Mpu::Virt_slot Mpu::find_slot_for_swap()
 
   panic("Could not find a slot for swapping!");
 }
+
+IMPLEMENTATION [mpu]:
 
 IMPLEMENT static inline
 void Mpu::swap_slots(Virt_slot victim_slot, Virt_slot swap_slot)
@@ -676,7 +776,11 @@ void Mpu::dump()
   printf("Cached + active MPU regions:\n");
 
   int pad = 2 * sizeof(Mword);
-  printf(ANSI("  %16s - [%*s..%*s, enabled|mem type, rights]@slot[in hw] - multiplex state\n", BOLD),
+  printf(ANSI("  %16s - [%*s..%*s, enabled|mem type, rights]@slot[in hw]"
+#if defined(CONFIG_MPULTIPLEX_SHOWDOWN)
+         " - age"
+#endif
+         " - multiplex state\n", BOLD),
          "label", -pad, "start", pad, "end");
 
   auto const& curr_state = Mpu::state();
@@ -693,6 +797,9 @@ void Mpu::dump()
                   "%cR%c%c"          ANSI("]@", DIM) ""      // rights
                   "%-4u"             ANSI("[", DIM) ""       // slot
                   "%5d"              ANSI("] - ", DIM) ""    // hardware slot
+#if defined(CONFIG_MPULTIPLEX_SHOWDOWN)
+                  "%3u"              ANSI(" - ", DIM) ""     // age
+#endif
                   "%s, %s\n",                                // multiplex state
 #if defined(CONFIG_MPULTIPLEX_DEBUG_LABELS)
                   region.label(),
@@ -710,6 +817,9 @@ void Mpu::dump()
                   (attr.rights() & L4_fpage::Rights::W()) ? 'W' : '-',
                   (attr.rights() & L4_fpage::Rights::X()) ? 'X' : '-',
                   i, region.slot(),
+#if defined(CONFIG_MPULTIPLEX_SHOWDOWN)
+                  region.age(),
+#endif
                   curr_state.active_regions[i] ? "active" : "cached",
                   curr_state.pinned_regions[i] ? "pinned" : "");
     }
@@ -1227,7 +1337,11 @@ Mpu_regions::dump() const
   mask |= _reserved;
 
   int pad = 2 * sizeof(Mword);
-  printf(ANSI("  %16s - [%*s..%*s, enabled|mem type, rights]@slot - status\n", BOLD),
+  printf(ANSI("  %16s - [%*s..%*s, enabled|mem type, rights]@slot"
+#if defined(CONFIG_MPULTIPLEX_SHOWDOWN)
+         " - age"
+#endif
+         " - status\n", BOLD),
          "label", -pad, "start", pad, "end");
 
   unsigned i = 0;
@@ -1243,6 +1357,9 @@ Mpu_regions::dump() const
                   "%-8s"             ANSI(",   ", DIM) ""    // type
                   "%cR%c%c"          ANSI("]@", DIM) ""      // rights
                   "%-4u"             ANSI(" - ", DIM) ""     // slot
+#if defined(CONFIG_MPULTIPLEX_SHOWDOWN)
+                  "%3u"              ANSI(" - ", DIM) ""     // age
+#endif
                   "%s\n",                                    // status
 #if defined(CONFIG_MPULTIPLEX_DEBUG_LABELS)
                   region.label(),
@@ -1260,6 +1377,9 @@ Mpu_regions::dump() const
                   (attr.rights() & L4_fpage::Rights::W()) ? 'W' : '-',
                   (attr.rights() & L4_fpage::Rights::X()) ? 'X' : '-',
                   i - 1,
+#if defined(CONFIG_MPULTIPLEX_SHOWDOWN)
+                  region.age(),
+#endif
                   _reserved[i] ? "reserved" : "used");
     }
   printf("\n");
