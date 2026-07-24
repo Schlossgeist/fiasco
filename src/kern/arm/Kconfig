@@ -627,6 +627,22 @@ config MPULTIPLEX_BLOCK_SIZE
 	  Setting this to a sufficiently high value will effectively minimize the
 	  amount of memory that is dynamically allocated. 
 
+config MPULTIPLEX_SHOWDOWN
+	bool "Use 'showdown' replacement strategy"
+	default n
+	depends on MPULTIPLEX
+	help
+	  Replaces the default random MPU region replacement strategy with a
+	  strategy that chooses the 'best' of N candidates in a showdown, according
+	  to a specific heuristic.
+
+config MPULTIPLEX_SHOWDOWN_N
+    int "Number of candidates taking part in a showdown"
+    range 1 8
+    default 2
+    depends on MPULTIPLEX_SHOWDOWN
+
+
 config MPULTIPLEX_DEBUG_LABELS
 	bool "Enable MPU region labels for debugging purposes"
 	default n
