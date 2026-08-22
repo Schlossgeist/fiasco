@@ -55,6 +55,9 @@ protected:
   /// Increment to the next element.
   inline void inc();
 
+  /// Decrement to the previous element.
+  inline void dec();
+
 public:
   /// Check two iterators for equality.
   bool operator == (__Bst_iter_b const &o) const { return _n == o._n; }
@@ -80,6 +83,7 @@ private:
   using Base::_n;
   using Base::_r;
   using Base::inc;
+  using Base::dec;
 
 public:
   /// Create an invalid iterator (end marker)
@@ -115,6 +119,15 @@ public:
    */
   __Bst_iter &operator ++ (int)
   { __Bst_iter tmp = *this; inc(); return tmp; }
+  /**
+   * \brief Set the iterator to the previous element (pre decrement).
+   */
+  __Bst_iter &operator -- () { dec(); return *this; }
+  /**
+   * \brief Set the iterator to the previous element (post decrement).
+   */
+  __Bst_iter &operator -- (int)
+  { __Bst_iter tmp = *this; dec(); return tmp; }
 };
 
 
@@ -157,20 +170,55 @@ void __Bst_iter_b<Node, Node_op>::inc()
 
   Node const *q = _r;
   Node const *p = _r;
-  while (1)
+  for (;;)
     {
       if (Node_op::cmp(_n, q))
-	{
-	  p = q;
-	  q = Node_op::child(q, Dir::L);
-	}
+	      {
+	        p = q;
+	        q = Node_op::child(q, Dir::L);
+	      }
       else if (_n == q || Node_op::child(q, Dir::R) == _n)
-	{
-	  _n = p;
-	  return;
-	}
+	      {
+	        _n = p;
+	        return;
+	      }
       else
-	q = Node_op::child(q, Dir::R);
+	      q = Node_op::child(q, Dir::R);
+    }
+}
+
+template< typename Node, typename Node_op>
+void __Bst_iter_b<Node, Node_op>::dec()
+{
+  if (!_n)
+    return;
+
+  if (Node const *l = Node_op::child(_n, Dir::L))
+  {
+    _n = l;
+
+    while (Node_op::child(_n, Dir::R))
+      _n = Node_op::child(_n, Dir::R);
+
+    return;
+  }
+
+  Node const *q = _r;
+  Node const *p = _r;
+  for (;;)
+    {
+      if (Node_op::cmp(q, _n))
+        {
+          p = q;
+          q = Node_op::child(q, Dir::R);
+        }
+      else if (_n == q || Node_op::child(q, Dir::L) == _n)
+        {
+          _n = p;
+          return;
+        }
+      else
+        q = Node_op::child(q, Dir::L);
     }
 }
 
