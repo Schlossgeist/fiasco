@@ -414,9 +414,6 @@ public:
   Pfn to_vaddr(Page v) const
   { return Pfn(cxx::int_value<Page>(v << _page_shift)); }
 
-  Pcnt page_size() const
-  { return Pcnt(1) << _page_shift; }
-
   Space *owner(Treemap const *submap) const
   { return submap->owner(); }
 
