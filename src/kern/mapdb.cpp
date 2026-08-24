@@ -517,10 +517,10 @@ Treemap_ops::flush(Treemap *submap,
           submap->flush(subframe,
                         page_offs_begin > offs_begin
                           ? Pcnt(0)
-                          : cxx::get_lsb(offs_begin - page_offs_begin, _page_shift),
+                          : offs_begin - page_offs_begin,
                         page_offs_end < offs_end
                           ? submap->page_size()
-                          : cxx::get_lsb(offs_end - page_offs_begin - Pcnt(1), _page_shift) + Pcnt(1));
+                          : offs_end - page_offs_begin);
         }
     }
 }
