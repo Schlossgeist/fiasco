@@ -435,8 +435,11 @@ PUBLIC
 unsigned long
 Treemap_ops::mem_size(Treemap const *submap) const
 {
-  unsigned long quota
-    = cxx::int_value<Page>(submap->_key_end) * sizeof(Physframe) + sizeof(Treemap);
+  // This must match what Treemap::create() charged and what Treemap::operator
+  // delete() refunds, otherwise granting a submap moves a different amount than
+  // is accounted for it.
+  unsigned long quota =
+    cxx::int_value<Bytes>(Treemap::quota_size(submap->_key_end));
 
   for (Page key = Page(0);
       key < submap->_key_end;
