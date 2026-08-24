@@ -38,9 +38,20 @@ __END_DECLS
 							  __FUNCTION__), 0)					\
 	  : 0))
 
-#define precondition(expr)		contract_assert("Precondition failed", expr)
-#define invariant(expr)		    contract_assert("Invariant failed", expr)
-#define postcondition(expr)		contract_assert("Postcondition failed", expr)
+#define contract_assert_with_block(msg, expr)						\
+    if (ASSERT_EXPECT_FALSE(!(expr)))								\
+      for (bool _condition_once = true;								\
+           _condition_once;											\
+           _condition_once = (contract_assert_fail(					\
+		     msg, #expr, __FILE__, __LINE__, __FUNCTION__), false))
+
+#define precondition(expr)	contract_assert("Precondition failed", expr)
+#define invariant(expr)		contract_assert("Invariant failed", expr)
+#define postcondition(expr)	contract_assert("Postcondition failed", expr)
+
+#define precondition_with_block(expr)	contract_assert_with_block("Precondition failed", expr)
+#define invariant_with_block(expr)		contract_assert_with_block("Invariant failed", expr)
+#define postcondition_with_block(expr)	contract_assert_with_block("Postcondition failed", expr)
 
 # define check(expr) assert(expr)
 #endif

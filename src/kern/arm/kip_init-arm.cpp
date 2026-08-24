@@ -131,9 +131,14 @@ Kip_init::map_kip(Kip *k)
 
   auto diff = Kmem::kdir->del(reinterpret_cast<Mword>(&_kernel_image_start),
                               reinterpret_cast<Mword>(&_kernel_kip_end) - 1U);
+  auto attr = Mpu_region_attr::make_attr(L4_fpage::Rights::URX(),
+                                         L4_snd_item::Memory_type::Normal(),
+                                         true,      // enabled
+                                         true,      // pinned
+                                         false);    // ku_mem
   diff |= Kmem::kdir->add(reinterpret_cast<Mword>(k),
                           reinterpret_cast<Mword>(k) + 0xfffU,
-                          Mpu_region_attr::make_attr(L4_fpage::Rights::URX()),
+                          attr,
                           false, Kpdir::Kip, "Kip");
 
   if (!diff)

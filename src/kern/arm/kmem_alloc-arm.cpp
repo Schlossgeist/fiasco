@@ -147,9 +147,14 @@ IMPLEMENTATION [arm && mpu]:
 PRIVATE void
 Kmem_alloc::map_heap(unsigned long start, unsigned long end)
 {
+  auto attr = Mpu_region_attr::make_attr(L4_fpage::Rights::RW(),
+                                         L4_snd_item::Memory_type::Normal(),
+                                         true,      // enabled
+                                         true,      // pinned
+                                         false);    // ku_mem
   auto touched =
     Kmem::kdir->add(start, end,
-                    Mpu_region_attr::make_attr(L4_fpage::Rights::RW()),
+                    attr,
                     false, Kpdir::Kernel_heap, "Kernel Heap");
   if (!touched)
     panic("Error creating kernel heap region!\n");

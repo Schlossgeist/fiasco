@@ -229,6 +229,13 @@ struct Mpu_arm_el2
     return v;
   }
 
+  static Mword prbar()
+  {
+    Mword v;
+    asm volatile("mrs %0, S3_4_c6_c8_0" : "=r"(v)); // PRBAR_EL2
+    return v;
+  }
+
   static void prbar(Mword v)
   { asm volatile("msr S3_4_c6_c8_0, %0" : : "r"(v)); } // PRBAR_EL2
 
@@ -455,8 +462,8 @@ Mpu_region_base::Mpu_region_base(Mword start, Mword end, Mpu_region_attr a)
 : prbar(start & ~0x3fUL), prlar(end & ~0x3fUL)
 {
   attr(a);
-  pinned = a.pinned();
-  ku_mem = a.ku_mem();
+  _pinned = a.pinned();
+  _ku_mem = a.ku_mem();
 }
 
 IMPLEMENT constexpr
@@ -487,7 +494,7 @@ Mpu_region_base::attr() const
                 ? L4_snd_item::Memory_type::Uncached()
                 : L4_snd_item::Memory_type::Buffered()),
             prlar & Enabled,
-            pinned, ku_mem);
+            _pinned, _ku_mem);
 }
 
 IMPLEMENT inline
@@ -520,8 +527,8 @@ Mpu_region_base::attr(Mpu_region_attr attr)
                   ? Attr::Buffered
                   : Attr::Normal))
           | (attr.enabled() ? Enabled : Disabled);
-  pinned = attr.pinned();
-  ku_mem = attr.ku_mem();
+  _pinned = attr.pinned();
+  _ku_mem = attr.ku_mem();
 }
 
 IMPLEMENT inline
@@ -531,53 +538,55 @@ Mpu_region_base::disable()
   prlar &= ~Enabled;
 }
 
+IMPLEMENT static inline
+void Mpu::dump_physical()
+{
+  printf("PHYSICAL MPU STATE----------------------------------------------------\n");
+  printf("PRENR=%08lx\n", Mpu_arm::prenr());
+  for (unsigned i = 0; i < Mpu::hardware_regions(); ++i)
+    {
+      Mpu_arm::prselr(i);
+      Mem::isb();
+
+      printf("\tHW[%2u]: PRBAR=%08lx PRLAR=%08lx\n",
+             i, Mpu_arm::prbar(), Mpu_arm::prlar());
+    }
+  // PRSELR must be 0 because it's assumed by kernel entry/exit code!
+  Mpu_arm::prselr(0);
+}
 
 IMPLEMENT static inline
 unsigned
 Mpu::hardware_regions()
 {
+  return 16;
   return Mpu_arm::hardware_regions();
 }
+
+static bool constexpr VERBOSE_LOG_LOGICAL = false;
+static bool constexpr VERBOSE_LOG_PHYSICAL = false;
 
 IMPLEMENT static
 void
 Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
           bool inplace, bool bypass_cache)
 {
-  if (false && !bypass_cache && Mpu::mpultiplex_enabled())
+  const_cast<Mpu_regions&>(regions).SYNCS++;
+  if (VERBOSE_LOG_LOGICAL && !bypass_cache && Mpu::mpultiplex_enabled())
     {
       printf("----------------------------------------------------------------------\n");
+      INFO("Sync");
       regions.dump();
+      printf("SYNCS: %lu\n", regions.SYNCS);
+
+      printf("Touched ");
+      touched.dump();
     }
 
-  if (!bypass_cache && Mpu::mpultiplex_enabled())
+  if (!bypass_cache)
     {
-      if (regions.size() > Mpu::regions())
-        Mpu::expand_virtual_regions(regions.size());
-
-      auto& curr_state = Mpu::state();
-
-      const_cast<Mpu_regions &>(regions).prepare_for_write_to_hw();
-      curr_state.last_cached_mpu_regions = &regions;
-
-      // update cache
-      unsigned i = 0;
-      while (i < touched.size() && (i = touched.ffs(i)))
-        {
-          Virt_slot const logical_slot  = i - 1;
-          Phys_slot const hardware_slot = curr_state.virtual_regions[logical_slot].slot();
-
-          auto r = Cached_mpu_region(regions[logical_slot], hardware_slot);
-#if defined(CONFIG_MPULTIPLEX_DEBUG_LABELS)
-          r.label(regions[logical_slot].label());
-#endif
-
-          curr_state.virtual_regions[logical_slot] = r;
-
-          curr_state.active_regions.clear_bit(logical_slot);
-          if (r.attr().pinned())
-            curr_state.pinned_regions.set_bit(logical_slot);
-        }
+      Mpu_regions::Snapshot &snapshot = const_cast<Mpu_regions &>(regions).take_snapshot(&touched);
+      Mpu::state().last_cached_snapshot = &snapshot;
     }
 
   unsigned i = 0;
@@ -589,12 +598,13 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
       if (!bypass_cache && mpultiplex_enabled())
         {
           auto const& curr_state = Mpu::state();
+          Mpu_regions::Snapshot const& snapshot = *(curr_state.last_cached_snapshot);
           // check if the region is already active but in a hardware slot
           // that differs from its logical slot
-          auto const &touched_region = curr_state.virtual_regions[logical_slot];
+          auto const &touched_region = snapshot[logical_slot];
           if (touched_region.is_active())
             hardware_slot = touched_region.slot();
-          else if (curr_state.active_regions.popcount() == Mpu::hardware_regions())
+          else if (snapshot.active_regions().popcount() == Mpu::hardware_regions())
             {
               Mpu::swap_slots(Mpu::find_slot_for_swap(), i - 1);
               continue;
@@ -606,8 +616,8 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
           Mpu_arm::prselr(hardware_slot);
           if (!inplace && (Mpu_arm::prlar() & Mpu_region_base::Enabled))
             {
-              // Always disable first! Otherwise a colliding region might exist
-              // briefly after writing prbar!
+              // Always disable first! Otherwise a colliding region might
+              // exist briefly after writing prbar!
               Mpu_arm::prlar(0);
               Mem::isb();
             }
@@ -617,15 +627,16 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
 
           if (!bypass_cache && mpultiplex_enabled())
             {
-              auto& curr_state = Mpu::state();
-              curr_state.virtual_regions[logical_slot].slot(hardware_slot);
-              curr_state.active_regions.set_bit(logical_slot);
+              auto &curr_state = Mpu::state();
+              Mpu_regions::Snapshot &snapshot = *(curr_state.last_cached_snapshot);
+              snapshot[logical_slot].slot(hardware_slot);
+              // snapshot.set_bit(logical_slot);
             }
         }
       // ensure that pinned regions are always active by
       // swaping them in if necessary
       else if (!bypass_cache && mpultiplex_enabled()
-               && Mpu::state().pinned_regions[logical_slot])
+               && Mpu::state().last_cached_snapshot->pinned_regions()[logical_slot])
         {
           Mpu::swap_slots(Mpu::find_slot_for_swap(), logical_slot);
         }
@@ -634,29 +645,32 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
   if (!bypass_cache && Mpu::mpultiplex_enabled())
     {
       // Mpu::dump();
-      invariant(hardware_regions() >= Mpu::state().active_regions.popcount());
+      invariant(hardware_regions() >= Mpu::state().last_cached_snapshot->active_regions().popcount());
+      invariant(Mpu::state().last_cached_snapshot->verify_hardware_consistency());
     }
 
   // PRSELR must be 0 because it's assumed by kernel entry/exit code!
   Mpu_arm::prselr(0);
 
-  if (false && !bypass_cache && Mpu::mpultiplex_enabled())
+  if (VERBOSE_LOG_PHYSICAL && !bypass_cache && Mpu::mpultiplex_enabled())
     {
-      INFO("Sync");
+      printf("SYNC\n");
+      Mpu::dump_physical();
+    }
 
-      printf("Touched ");
-      touched.dump();
+  if (VERBOSE_LOG_LOGICAL && !bypass_cache && Mpu::mpultiplex_enabled())
+    {
       Mpu::dump();
     }
 }
 
 IMPLEMENT static inline
 void
-Mpu::swap(Phys_slot victim_slot, Cached_mpu_region const &region, bool inplace)
+Mpu::swap(Phys_slot victim_slot, Mpu_region const &region, bool inplace)
 {
   Mpu_arm::prselr(victim_slot);
   Mem::isb();
-  if (!inplace && (Mpu_arm::prlar() & Cached_mpu_region::Enabled))
+  if (!inplace && (Mpu_arm::prlar() & Mpu_region::Enabled))
     {
       // Always disable first! Otherwise a colliding region might
       // exist briefly after writing prbar!
@@ -675,47 +689,27 @@ IMPLEMENT static
 void
 Mpu::update(Mpu_regions const &regions)
 {
-  if (false && Mpu::mpultiplex_enabled())
+  const_cast<Mpu_regions&>(regions).UPDATES++;
+  if (VERBOSE_LOG_LOGICAL && Mpu::mpultiplex_enabled())
     {
       printf("----------------------------------------------------------------------\n");
+      INFO("Update");
       regions.dump();
+      printf("UPDATES: %lu\n", regions.UPDATES);
+
+      // printf("Reserved ");
+      // reserved.dump();
     }
 
   Mpu_regions_mask const &reserved = regions.reserved();
 
-  if (Mpu::mpultiplex_enabled())
-    {
-      if (regions.size() > Mpu::regions())
-        Mpu::expand_virtual_regions(regions.size());
-
-      auto& curr_state = Mpu::state();
-
-      const_cast<Mpu_regions &>(regions).prepare_for_write_to_hw();
-      curr_state.last_cached_mpu_regions = &regions;
-
-      Mpu::flush_cache();
-      for (unsigned i = 0; i < regions.size(); ++i)
-        {
-          Mpu_region_base const &r = regions[i];
-          curr_state.virtual_regions[i] = r;
-#if defined(CONFIG_MPULTIPLEX_DEBUG_LABELS)
-          curr_state.virtual_regions[i].label(r.label());
-#endif
-
-          if (r.attr().pinned())
-            curr_state.pinned_regions.set_bit(i);
-        }
-    }
+  Mpu_regions::Snapshot &snapshot = const_cast<Mpu_regions &>(regions).take_snapshot();
+  Mpu::state().last_cached_snapshot = &snapshot;
 
   // Disable regions that we're updating. Otherwise there is the possibility to
   // have an invalid, colliding region when prbar is updated and the current
   // prlar of the updated region is still enabled.
   Mpu_arm::prenr(Mpu_arm::prenr() & *reserved.raw());
-
-  IMpu_region_base_container const *actual_regions = &regions;
-  auto& curr_state = Mpu::state();
-  if (Mpu::mpultiplex_enabled())
-    actual_regions = &curr_state.virtual_regions;
 
 #define UPDATE(base, i)                                            \
   do                                                               \
@@ -727,10 +721,22 @@ Mpu::update(Mpu_regions const &regions)
   while (false)
 
   unsigned real_size = min(hardware_regions(), regions.size());
-  curr_state.active_regions.set_first_bits(real_size);
+  // curr_state.active_regions.set_first_bits(real_size);
 
-  for (unsigned i = 0; i < real_size; ++i)
-    curr_state.virtual_regions[i].slot(i);
+  IMpu_region_base_container const *actual_regions = &regions;
+  if (Mpu::mpultiplex_enabled())
+    {
+      auto& curr_state = *(Mpu::state().last_cached_snapshot);
+      actual_regions = &curr_state;
+
+      for (unsigned i = 0; i < curr_state.size(); ++i)
+        if (i < real_size)
+          curr_state[i].slot(i);
+        else
+          curr_state[i].slot(-1);
+
+      invariant(curr_state.verify_hardware_consistency());
+    }
 
   // We don't support more than 32 regions. Between 17 and 32 regions we have
   // to switch banks.
@@ -800,24 +806,26 @@ Mpu::update(Mpu_regions const &regions)
 
   if (Mpu::mpultiplex_enabled())
     {
-      auto const& curr_state = Mpu::state();
+      Mpu_regions::Snapshot const& snapshot = *(Mpu::state().last_cached_snapshot);
       // During Mpu::update, virtual regions are put into physical slots
       // 1-to-1, which means if there are more virtual regions than slots,
       // there may be pinned regions in the overhanging virtual regions,
       // which have to be swapped in explicitly.
       auto pinned_but_inactive_regions
-        = curr_state.pinned_regions & ~curr_state.active_regions;
+        = snapshot.pinned_regions() & ~snapshot.active_regions();
 
       if (!pinned_but_inactive_regions.is_empty())
         Mpu::sync(regions, pinned_but_inactive_regions);
     }
 
-  if (false && Mpu::mpultiplex_enabled())
+  if (VERBOSE_LOG_PHYSICAL && Mpu::mpultiplex_enabled())
     {
-      INFO("Update");
+      printf("UPDATE\n");
+      Mpu::dump_physical();
+    }
 
-      printf("Reserved ");
-      reserved.dump();
+  if (VERBOSE_LOG_LOGICAL && Mpu::mpultiplex_enabled())
+    {
       Mpu::dump();
     }
 }

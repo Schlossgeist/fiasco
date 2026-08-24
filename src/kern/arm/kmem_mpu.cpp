@@ -24,9 +24,14 @@ DEFINE_GLOBAL_CONSTINIT Global_data<Kpdir*> Kmem::kdir(&kmpu);
 static void
 setup_mpu()
 {
+  auto attr = Mpu_region_attr::make_attr(L4_fpage::Rights::RWX(),
+                                         L4_snd_item::Memory_type::Normal(),
+                                         true,      // enabled
+                                         true,      // pinned
+                                         false);    // ku_mem
   auto diff = kmpu->add(reinterpret_cast<Mword>(_kernel_image_start),
                         reinterpret_cast<Mword>(_initcall_end) - 1U,
-                        Mpu_region_attr::make_attr(L4_fpage::Rights::RWX()),
+                        attr,
                         false, Kpdir::Kernel_text, "Kernel Text");
 
   // Will probably be never seen because UART is not setup yet. :(
