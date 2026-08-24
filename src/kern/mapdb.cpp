@@ -494,6 +494,8 @@ void
 Treemap_ops::flush(Treemap *submap,
                    Treemap::Pcnt offs_begin, Treemap::Pcnt offs_end) const
 {
+  assert(submap->round_to_page(offs_end) <= submap->end());
+
   for (Treemap::Page i = submap->trunc_to_page(offs_begin);
       i < submap->round_to_page(offs_end);
       ++i)
@@ -517,7 +519,7 @@ Treemap_ops::flush(Treemap *submap,
                           ? Pcnt(0)
                           : cxx::get_lsb(offs_begin - page_offs_begin, _page_shift),
                         page_offs_end < offs_end
-                          ? page_size()
+                          ? submap->page_size()
                           : cxx::get_lsb(offs_end - page_offs_begin - Pcnt(1), _page_shift) + Pcnt(1));
         }
     }
