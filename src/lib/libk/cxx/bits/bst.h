@@ -192,6 +192,19 @@ public:
    */
   Iterator end() { return Iterator(); }
 
+  /**@{*/
+  /**
+   * \brief Get the constant iterator for the given element in the set.
+   * \return Constant iterator for the given element in the set.
+   */
+  Const_iterator iter(Node const* node) const { return Const_iterator(node, head()); }
+  /**@{*/
+  /**
+   * \brief Get the iterator for the given element in the set.
+   * \return Iterator for the given element in the set.
+   */
+  Iterator iter(Node const* node) { return Iterator(node, head()); }
+
   /**
    * \brief Get the constant backward iterator for the last element in the set.
    * \return The constant backward iterator for the last element in the set.
