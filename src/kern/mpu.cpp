@@ -592,17 +592,16 @@ Mpu::Phys_slot Mpu::find_free_phys_slot()
 
   Mpu_regions_mask free_slots(hw_regions);
   free_slots.set_first_bits(hw_regions);
-  Mpu_regions_mask permanently_reserved;
-  permanently_reserved.set_first_bits(4);
 
-  for (unsigned i = 0; i < curr_state.size(); ++i)
-  {
-    invariant(curr_state[i].slot() < hw_regions);
-    if (curr_state[i].is_active())
-      free_slots.bit(curr_state[i].slot(), false);
-  }
+  unsigned i = 0;
+  while (i < curr_state.size() && (i = curr_state.active_regions().ffs(i)))
+    free_slots.clear_bit(curr_state[i - 1].slot());
 
-  int free_slot = (free_slots & ~permanently_reserved).ffs(0) - 1;
+  int free_slot = free_slots.ffs(4) - 1;
+  printf("calculated free slots    "); free_slots.dump();
+  Mpu_regions_mask free_phys_slots = ~curr_state.used_phys_slots();
+  printf("inverted used phys slots "); free_phys_slots.dump();
+
   if (free_slot < 0)
     panic("Could not find a free physical slot!");
 
@@ -1077,21 +1076,28 @@ public:
     int   slot () const { return Mpu_region::slot(); }
     void  slot (int s)
     {
-      precondition(s < 32);
+      precondition(s < static_cast<int>(Mpu::hardware_regions()));
 
       if (_snapshot)
         {
           unsigned const idx = _snapshot->index(this);
-          bool     const activated = s >= 0;
-          _snapshot->_active_regions.bit(idx, activated);
+          bool     const was_active = slot() >= 0;
+          bool     const now_active = s      >= 0;
+          _snapshot->_active_regions.bit(idx, now_active);
           _snapshot->_pinned_regions.bit(idx, attr().pinned());
+
+          if (was_active)
+            _snapshot->_used_phys_slots.clear_bit(slot());
+
+          if (now_active)
+            _snapshot->_used_phys_slots.set_bit(s);
 
           if (attr().ku_mem())
             {
-              if (slot() >= 0)
+              if (was_active)
                 _snapshot->_current_ku_mem &= ~(1 << slot());
 
-              if (activated)
+              if (now_active)
                 _snapshot->_current_ku_mem |=   1 << s;
             }
         }
@@ -1118,6 +1124,7 @@ public:
   public:
     explicit Snapshot(Mpu_regions const &regions)
     : Mpu_region_block_storage(regions.size())
+    , _used_phys_slots(Mpu::hardware_regions())
     {
       for (unsigned i = 0; i < regions.size(); ++i)
         {
@@ -1133,14 +1140,14 @@ public:
       if (regions.size() > size())
         {
             size_t new_size = reserve(regions.size());
+            // resize and clear all in one
             Mpu_regions_mask m(new_size);
-            _active_regions |= m;
-            _pinned_regions |= m;
-            _active_regions.clear_all();
-            _pinned_regions.clear_all();
+            _active_regions &= m;
+            _pinned_regions &= m;
         }
 
-      clear();
+      _region_tree.remove_all([](Mpu_region *){});
+      _used_phys_slots.clear_all();
       for (unsigned i = 0; i < regions.size(); ++i)
         {
           Snapshot_region &r = (*this)[i];
@@ -1180,12 +1187,6 @@ public:
       return nullptr;
     }
 
-    void clear()
-    {
-      _region_tree.remove_all([](Mpu_region *){});
-      Mpu_region_block_storage::clear();
-    }
-
     Unsigned32 current_ku_mem() const
     { return _current_ku_mem; }
 
@@ -1193,6 +1194,8 @@ public:
     { return _active_regions; }
     Mpu_regions_mask const &pinned_regions() const
     { return _pinned_regions; }
+    Mpu_regions_mask const &used_phys_slots() const
+    { return _used_phys_slots; }
     Mpu_regions_mask evictable_regions() const
     { return _active_regions & ~_pinned_regions; }
 
@@ -1233,6 +1236,8 @@ public:
     Mpu_regions_mask _active_regions;
     // bitmask of cached regions that are not supposed to be swapped out
     Mpu_regions_mask _pinned_regions;
+    // bitmask of used physical slots
+    Mpu_regions_mask _used_phys_slots;
   };
 
 private:
