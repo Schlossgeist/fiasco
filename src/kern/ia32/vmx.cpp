@@ -122,6 +122,8 @@ public:
   enum Primary_proc_based_ctls
   {
     PRB1_rdpmc_exiting            = 11,
+    PRB1_cr8_load_exiting         = 19,
+    PRB1_cr8_store_exiting        = 20,
     PRB1_tpr_shadow               = 21,
     PRB1_mov_dr_exit              = 23,
     PRB1_unconditional_io_exit    = 24,
@@ -270,10 +272,11 @@ public:
    */
   enum Vmcs_64bit_ctl_fields : Unsigned16
   {
-    Vmcs_tsc_offset          = 0x2010,
-    Vmcs_apic_access_address = 0x2014,
-    Vmcs_ept_pointer         = 0x201a,
-    Vmcs_tsc_multiplier      = 0x2032,
+    Vmcs_tsc_offset           = 0x2010,
+    Vmcs_virtual_apic_address = 0x2012,
+    Vmcs_apic_access_address  = 0x2014,
+    Vmcs_ept_pointer          = 0x201a,
+    Vmcs_tsc_multiplier       = 0x2032,
 
     // Must be the last
     Max_64bit_ctl
@@ -358,6 +361,7 @@ public:
     Vmcs_vm_entry_interrupt_info     = 0x4016,
     Vmcs_vm_entry_exception_error    = 0x4018,
     Vmcs_vm_entry_insn_len           = 0x401a,
+    Vmcs_tpr_threshold               = 0x401c,
     Vmcs_sec_proc_based_vm_exec_ctls = 0x401e,
 
     // Must be the last
@@ -1327,7 +1331,12 @@ public:
     /**
      * Hardware VMCS order.
      */
-    Vmcs_order = 12
+    Vmcs_order = 12,
+
+    /**
+     * Virtual-APIC page order.
+     */
+    Vapic_order = 12
   };
 
 private:
@@ -1335,6 +1344,11 @@ private:
    * VMCS region.
    */
   void *_ptr;
+
+  /**
+   * Virtual-APIC page used for TPR shadowing.
+   */
+  void *_vapic;
 
   /**
    * Allocation quota.
@@ -1381,7 +1395,7 @@ JDB_DEFINE_TYPENAME(Vmx_vmcs, "VMX VMCS");
  */
 PRIVATE inline NEEDS["idt.h", "entry-ia32.h"]
 void
-Vmx::initialize_current_vmcs()
+Vmx::initialize_current_vmcs(Vmx_vmcs const *vmx_vmcs)
 {
   vmcs_write<Vmcs_host_es_selector>(GDT_DATA_KERNEL);
   vmcs_write<Vmcs_host_cs_selector>(GDT_CODE_KERNEL);
@@ -1410,6 +1424,12 @@ Vmx::initialize_current_vmcs()
   vmcs_write<Vmcs_exit_msr_load_cnt>(0);
   vmcs_write<Vmcs_exit_msr_store_cnt>(0);
   vmcs_write<Vmcs_entry_msr_load_cnt>(0);
+
+  if (info.procbased_ctls.allowed(Vmx_info::PRB1_tpr_shadow))
+    {
+      vmcs_write<Vmcs_virtual_apic_address>(vmx_vmcs->virt_apic_page_pa());
+      vmcs_write<Vmcs_tpr_threshold>(0);
+    }
 }
 
 DEFINE_PER_CPU Per_cpu<Vmx> Vmx::cpus(Per_cpu_data::Cpu_num);
@@ -1509,8 +1529,25 @@ Vmx_info::init(Cpu_number cpu)
   // exit on performance counter use
   procbased_ctls.enforce(Vmx_info::PRB1_rdpmc_exiting, true);
 
-  // virtual APIC not yet supported
-  procbased_ctls.enforce(Vmx_info::PRB1_tpr_shadow, false);
+  // Enable the TPR shadow so that CR8 accesses operate on a virtual TPR. If TPR
+  // shadowing is not available, force CR8 accesses to cause VM exits instead.
+  if (procbased_ctls.allowed(Vmx_info::PRB1_tpr_shadow))
+    procbased_ctls.enforce(Vmx_info::PRB1_tpr_shadow, true);
+  else if (procbased_ctls.allowed(Vmx_info::PRB1_cr8_load_exiting)
+           && procbased_ctls.allowed(Vmx_info::PRB1_cr8_store_exiting))
+    {
+      procbased_ctls.enforce(Vmx_info::PRB1_cr8_load_exiting, true);
+      procbased_ctls.enforce(Vmx_info::PRB1_cr8_store_exiting, true);
+    }
+  else if constexpr (TAG_ENABLED(64bit))
+    {
+      // Without TPR shadowing and without CR8 exiting, a 64-bit guest can use
+      // CR8 to modify the host's physical TPR.
+      if (cpu == Cpu_number::boot_cpu())
+        printf("VMX: Cannot protect the host TPR\n");
+
+      return false;
+    }
 
   // we disable VPID so far, need to handle virtualize it in Fiasco,
   // as done for AMDs ASIDs
@@ -2906,7 +2943,8 @@ Vmx::load_vmx_vmcs(Vmx_vmcs *vmx_vmcs)
       // Initialize the VMCS which has been loaded for the first time.
       if (!initialized) [[unlikely]]
         {
-          initialize_current_vmcs();
+          initialize_current_vmcs(vmx_vmcs);
+
           if (vmwrite_failure.current()) [[unlikely]]
             return -L4_err::ENodev;
         }
@@ -2990,17 +3028,21 @@ static Kmem_slab_t<Vmx_vmcs> _vmx_vmcs_allocator("VMX VMCS");
  *
  * \param quota  RAM quota of this object.
  * \param addr   Pre-allocated, page-aligned VMCS memory region.
+ * \param vapic  Pre-allocated, page-aligned virtual-APIC page.
  */
 PUBLIC
-Vmx_vmcs::Vmx_vmcs(Ram_quota *quota, void *addr)
+Vmx_vmcs::Vmx_vmcs(Ram_quota *quota, void *addr, void *vapic)
   : _ptr(addr),
+    _vapic(vapic),
     _quota(quota),
     _owner(nullptr),
     _active(Cpu_number::nil())
 {
   assert(_ptr);
+  assert(_vapic);
 
   memset(_ptr, 0, Vmcs_size);
+  memset(_vapic, 0, 1U << Vapic_order);
   inc_ref(true);
 }
 
@@ -3073,13 +3115,27 @@ Vmx_vmcs::shootdown()
 /**
  * VMCS object destructor.
  *
- * The VMCS region is deallocated.
+ * The VMCS region and the virtual-APIC page are deallocated.
  */
 PUBLIC
 Vmx_vmcs::~Vmx_vmcs()
 {
   assert(_ptr);
+  assert(_vapic);
   Kmem_alloc::allocator()->q_free(_quota, Order(Vmcs_order), _ptr);
+  Kmem_alloc::allocator()->q_free(_quota, Order(Vapic_order), _vapic);
+}
+
+/**
+ * Get the physical address of the virtual-APIC page.
+ *
+ * \return Physical address of the virtual-APIC page.
+ */
+PUBLIC inline
+Address
+Vmx_vmcs::virt_apic_page_pa() const
+{
+  return Kmem::virt_to_phys(_vapic);
 }
 
 /**
@@ -3250,8 +3306,8 @@ namespace {
 /**
  * Factory for creating VMCS objects.
  *
- * Before the VMCS object is allocated, the VMCS memory region associated with
- * it is allocated.
+ * Before the VMCS object is allocated, the VMCS memory region and the
+ * virtual-APIC page associated with it are allocated.
  *
  * \param      quota  RAM quota.
  * \param[out] err    Error code in case of allocation failure.
@@ -3264,12 +3320,16 @@ vmx_vmcs_factory(Ram_quota *quota, Space *, L4_msg_tag, Utcb const *, Utcb *,
 {
   *err = L4_err::ENomem;
 
-  void *vmcs
-    = Kmem_alloc::allocator()->q_alloc(quota, Order(Vmx_vmcs::Vmcs_order));
-  if (!vmcs)
-    return nullptr;
+  auto *alloc = Kmem_alloc::allocator();
+  if (void *vmcs = alloc->q_alloc(quota, Order(Vmx_vmcs::Vmcs_order)))
+    {
+      if (void *vapic = alloc->q_alloc(quota, Order(Vmx_vmcs::Vapic_order)))
+        return new (quota) Vmx_vmcs(quota, vmcs, vapic);
 
-  return new (quota) Vmx_vmcs(quota, vmcs);
+      alloc->q_free(quota, Order(Vmx_vmcs::Vmcs_order), vmcs);
+    }
+
+  return nullptr;
 }
 
 /**
