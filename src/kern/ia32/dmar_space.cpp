@@ -91,7 +91,7 @@ private:
           auto o = p & ~2ULL;
           if (o != p)
             {
-              write_now(&e->v, p);
+              write_now(&e->v, o);
               clean_dcache(e);
             }
         }
