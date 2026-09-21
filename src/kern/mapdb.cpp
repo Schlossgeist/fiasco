@@ -71,9 +71,51 @@ public:
   public:
     using Iterator = Mapping_tree::Iterator;
 
+    // WARN: The iterator might become stale if the mapping tree in `frame` is
+    // modified. After modifying the mapping tree, revalidate() must be called,
+    // to ensure `m` is not stale (otherwise could result in use-after-free or
+    // in using a wrong mapping).
     Iterator m;
     Treemap *treemap;
     Physframe *frame = nullptr;
+
+    /**
+     * The mapping this frame refers to, or nullptr for an insertion head.
+     */
+    Mapping *mapping() const
+    { return *m; }
+
+    /**
+     * Re-establish the iterator after the mapping tree may have been modified.
+     *
+     * `m` is an S_list iterator, so it holds the address of the
+     * *predecessor's* next pointer, not of the mapping itself.
+     * Anything that frees the predecessor leaves the iterator dangling.
+     * Anything that inserts after the predecessor makes the iterator point to a
+     * different mapping. Even though the mapping the iterator refers to is
+     * untouched.
+     *
+     * \param mapping  The mapping this frame referred to, as returned by
+     *                 mapping() before the modification.
+     *
+     * \retval true   The frame refers to `mapping` again, or it did not
+     *                refer to a mapping in the first place.
+     * \retval false  `mapping` is gone, the frame must not be used any more.
+     */
+    bool revalidate(Mapping *mapping)
+    {
+      if (!mapping || !frame)
+        return true;
+
+      for (Mapping_tree::Iterator i = frame->tree()->begin(); *i; ++i)
+        if (*i == mapping)
+          {
+            m = i;
+            return true;
+          }
+
+      return false;
+    }
 
     Pfn vaddr(Mapping_tree::Iterator m) const
     { return treemap->vaddr(*m); }
@@ -245,6 +287,8 @@ public:
   {
   public:
     static constexpr void *frame = nullptr;
+    static constexpr void *mapping() { return nullptr; }
+    bool revalidate(void *) const { return true; }
     bool same_lock(Frame const &) const { return false; }
     void clear() {}
     void might_clear() {}
