@@ -499,11 +499,12 @@ public:
    */
   enum Sw_nat_guest_fields : Unsigned16
   {
-    Sw_guest_cr2 = 0x6880,
-    Sw_nat_arg0  = 0x6882,
-    Sw_nat_arg1  = 0x6884,
-    Sw_nat_arg2  = 0x6886,
-    Sw_nat_arg3  = 0x6888,
+    Sw_guest_cr2  = 0x6880,
+    Sw_nat_arg0   = 0x6882,
+    Sw_nat_arg1   = 0x6884,
+    Sw_nat_arg2   = 0x6886,
+    Sw_nat_arg3   = 0x6888,
+    Sw_guest_vtpr = 0x688a,
 
     // Must be the last
     Max_nat_sw
@@ -1336,7 +1337,12 @@ public:
     /**
      * Virtual-APIC page order.
      */
-    Vapic_order = 12
+    Vapic_order = 12,
+
+    /**
+     * Offset of the virtual TPR in the virtual-APIC page.
+     */
+    Vtpr_offset = 0x80
   };
 
 private:
@@ -2212,7 +2218,8 @@ Vmx_vm_state_t<HOST_STATE>::load_guest_state()
   Vmx_info::Flags<Unsigned32> pinbased_ctls
     = to_vmcs<Vmx::Vmcs_pin_based_vm_exec_ctls>(vmx.info.pinbased_ctls);
 
-  to_vmcs<Vmx::Vmcs_pri_proc_based_vm_exec_ctls>(vmx.info.procbased_ctls);
+  Vmx_info::Flags<Unsigned32> procbased_ctls
+    = to_vmcs<Vmx::Vmcs_pri_proc_based_vm_exec_ctls>(vmx.info.procbased_ctls);
 
   Vmx_info::Flags<Unsigned32> procbased_ctls_2
     = to_vmcs<Vmx::Vmcs_sec_proc_based_vm_exec_ctls>(vmx.info.procbased_ctls2);
@@ -2297,7 +2304,7 @@ Vmx_vm_state_t<HOST_STATE>::load_guest_state()
   //   * I/O bitmaps
   //   * MSR bitmaps
   //   * SMM virtualization
-  //   * Virtual APIC
+  //   * APIC-register virtualization (TPR shadowing is supported)
   //   * PAE handling without EPT
 
   to_vmcs<Vmx::Vmcs_tsc_offset>();
@@ -2307,6 +2314,19 @@ Vmx_vm_state_t<HOST_STATE>::load_guest_state()
 
   if (procbased_ctls_2.test(Vmx_info::PRB2_virtualize_apic))
     to_vmcs<Vmx::Vmcs_apic_access_address>();
+
+  // The virtual-APIC address is programmed when the VMCS is initialized.
+  if (procbased_ctls.test(Vmx_info::PRB1_tpr_shadow))
+    {
+      // The TPR threshold is sanitized because bits 31:4 are reserved.
+      Vmx::vmcs_write<Vmx::Vmcs_tpr_threshold>
+        (read<Vmx::Vmcs_tpr_threshold>() & 0x0fU);
+
+      // Restore the virtual TPR into the virtual-APIC page. The hardware
+      // updates the page on CR8 accesses so that the VMM can observe the
+      // current TPR after the next VM exit.
+      vmx.set_vtpr(read<Vmx::Sw_guest_vtpr>());
+    }
 
   // exception bit map and pf error-code stuff
   to_vmcs<Vmx::Vmcs_exception_bitmap>(vmx.info.exception_bitmap);
@@ -2440,6 +2460,10 @@ Vmx_vm_state_t<HOST_STATE>::store_guest_state()
   from_vmcs<Vmx::Vmcs_guest_rip>();
   from_vmcs<Vmx::Vmcs_guest_rflags>();
   from_vmcs<Vmx::Vmcs_guest_pending_dbg_exceptions>();
+
+  // Save the virtual TPR, which may have been changed by the guest through
+  // CR8 access from the virtual-APIC page back to the software VMCS.
+  write<Vmx::Sw_guest_vtpr>(vmx.vtpr());
 }
 
 /**
@@ -3016,6 +3040,32 @@ Vmx::vmx_failure()
 { return vmwrite_failure.current(); }
 
 /**
+ * Get the virtual TPR from the virtual-APIC page.
+ *
+ * \return Virtual TPR.
+ */
+PUBLIC inline
+Unsigned32
+Vmx::vtpr() const
+{
+  assert(_current_vmcs);
+  return _current_vmcs->vtpr();
+}
+
+/**
+ * Set the virtual TPR in the virtual-APIC page.
+ *
+ * \param value  Virtual TPR (only bits 7:0 are architecturally defined).
+ */
+PUBLIC inline
+void
+Vmx::set_vtpr(Unsigned32 value)
+{
+  assert(_current_vmcs);
+  _current_vmcs->set_vtpr(value);
+}
+
+/**
  * Slab allocator for the VMCS objects.
  */
 static Kmem_slab_t<Vmx_vmcs> _vmx_vmcs_allocator("VMX VMCS");
@@ -3136,6 +3186,30 @@ Address
 Vmx_vmcs::virt_apic_page_pa() const
 {
   return Kmem::virt_to_phys(_vapic);
+}
+
+/**
+ * Get the virtual TPR from the virtual-APIC page.
+ *
+ * \return Virtual TPR.
+ */
+PUBLIC inline
+Unsigned32
+Vmx_vmcs::vtpr() const
+{
+  return *offset_cast<volatile Unsigned32 *>(_vapic, Vtpr_offset);
+}
+
+/**
+ * Set the virtual TPR in the virtual-APIC page.
+ *
+ * \param value  Virtual TPR (only bits 7:0 are architecturally defined).
+ */
+PUBLIC inline
+void
+Vmx_vmcs::set_vtpr(Unsigned32 value)
+{
+  *offset_cast<volatile Unsigned32 *>(_vapic, Vtpr_offset) = value & 0xffU;
 }
 
 /**
