@@ -1,6 +1,6 @@
 INTERFACE [mpu]:
 
-#include <cxx/dlist>
+#include <cxx/avl_tree>
 
 #include "bitmap.h"
 #include "l4_fpage.h"
@@ -197,10 +197,14 @@ public:
  * architecture extends the struct with the actual data for the hardware. All
  * addresses are inclusive!
  */
-struct Mpu_region : public cxx::D_list_item
+struct Mpu_region : public cxx::Avl_tree_node
 {
   constexpr Mpu_region();
   Mpu_region(Mword start, Mword end, Mpu_region_attr a);
+
+  using Key_type = Mword;
+  static Key_type key_of(Mpu_region const *r)
+  { return r->start(); }
 
   constexpr Mword start() const;
   constexpr Mword end() const;
@@ -231,7 +235,7 @@ struct Mpu_region : public cxx::D_list_item
  */
 class Mpu_regions
 {
-  typedef cxx::D_list<Mpu_region> Region_list;
+  using Region_tree = cxx::Avl_tree<Mpu_region, Mpu_region>;
 
 public:
   /**
@@ -259,13 +263,13 @@ public:
   : _size(other._size), _reserved(other._reserved)
   {
     _reserved |= other._used_mask;
-    for (Mpu_region *i : other._used_list)
+    for (Mpu_region const &i : other._used_tree)
       {
-        unsigned idx = other.index(i);
-        Mpu_region *r = &(*this)[idx];
-        r->start(i->start());
-        r->end(i->end());
-        r->attr(i->attr());
+        unsigned idx = other.index(&i);
+        Mpu_region &r = (*this)[idx];
+        r.start(i.start());
+        r.end(i.end());
+        r.attr(i.attr());
       }
   }
 
@@ -285,48 +289,55 @@ private:
   unsigned index(Mpu_region const *r) const
   { return r - _regions; }
 
-  Mpu_region *deref_iter(Region_list::Iterator iter) const
-  { return iter != _used_list.end() ? *iter : nullptr; }
+  Mpu_region *deref_iter(Region_tree::Iterator iter) const
+  { return iter != _used_tree.end() ? iter.operator->() : nullptr; }
 
   Mpu_region *front() const
-  { return deref_iter(_used_list.begin()); }
+  { return deref_iter(_used_tree.begin()); }
 
   Mpu_region *next(Mpu_region *r) const
   {
-    auto iter = _used_list.iter(r);
+    Region_tree::Iterator iter = _used_tree.iter(r);
     return deref_iter(++iter);
   }
 
   Mpu_region *prev(Mpu_region *r) const
   {
-    auto iter = _used_list.iter(r);
-    return iter != _used_list.begin() ? *(--iter) : nullptr;
+    Region_tree::Iterator iter = _used_tree.iter(r);
+    return iter != _used_tree.begin() ? (--iter).operator->() : nullptr;
   }
 
   Mpu_region *erase(Mpu_region *r)
   {
     _used_mask.clear_bit(index(r));
     r->disable();
-    return deref_iter(_used_list.erase(_used_list.iter(r)));
+    return _used_tree.erase(r->start());
   }
 
   enum Insert { After, Before, Back };
 
-  void insert(Mpu_region *r, Insert mode, Mpu_region *pos)
+  bool insert(Mpu_region *r)
   {
     _used_mask.set_bit(index(r));
-    if (mode == After)
-      _used_list.insert_after(r, _used_list.iter(pos));
-    else if (mode == Before)
-      _used_list.insert_before(r, _used_list.iter(pos));
-    else
-      _used_list.push_back(r);
+    auto [node, was_not_in_tree_before] = _used_tree.insert(r);
+    return was_not_in_tree_before;
+  }
+
+  Mpu_region *reinsert(Mpu_region *r, Mpu_region::Key_type new_start)
+  {
+    _used_tree.erase(r->start());
+    r->start(new_start);
+    auto [node, was_not_in_tree_before] = _used_tree.insert(r);
+
+    assert(was_not_in_tree_before);
+
+    return node;
   }
 
   unsigned _size;
   Mpu_regions_mask _reserved;
   Mpu_regions_mask _used_mask;  ///< Bit mask of occupied regions
-  Region_list _used_list;       ///< Sorted list (by address) of used regions
+  Region_tree _used_tree;       ///< Sorted tree (by address) of used regions
   Mpu_region _regions[Mem_layout::Mpu_regions];
 };
 
@@ -359,17 +370,17 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
   // collision the existing regions need to be extended and optimized.
   Mpu_region *left = nullptr;
   Mpu_region *right = nullptr;
-  for (Mpu_region *i : _used_list)
+  for (Mpu_region &i : _used_tree)
     {
-      if (i->end() < start)
-        left = i;
-      else if (end < i->start())
+      if (i.end() < start)
+        left = &i;
+      else if (end < i.start())
         {
-          right = i;
+          right = &i;
           break;
         }
       else if (join) [[likely]]
-        return extend(i, attr, start, end); // Slow path in case of collisions
+        return extend(&i, attr, start, end); // Slow path in case of collisions
       else
         return Mpu_regions_update(Mpu_regions_update::Error_collision);
     }
@@ -404,7 +415,7 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
         }
       else
         {
-          right->start(start);
+          reinsert(right, start);
           r = right;
         }
     }
@@ -418,17 +429,12 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
   if (!r)
     return Mpu_regions_update(Mpu_regions_update::Error_no_mem);
 
+  // No reinsertion needed, because 'r' was free, therefore unused.
   r->start(start);
   r->end(end);
   r->attr(attr);
 
-  // insert into sorted list
-  if (left)
-    insert(r, After, left);
-  else if (right)
-    insert(r, Before, right);
-  else
-    insert(r, Back, nullptr);
+  insert(r);
 
   updates.set_updated(index(r));
   return updates;
@@ -478,13 +484,14 @@ Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
             {
               updates.set_updated(index(r));
 
-              r->attr(i->attr());
+              // No reinsertion needed, because 'r' was free, therefore unused.
               r->start(end + 1U);
               r->end(i->end());
+              r->attr(i->attr());
 
               i->end(start - 1U);
 
-              insert(r, After, i);
+              insert(r);
             }
           else
             {
@@ -505,7 +512,7 @@ Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
       else
         {
           // Lower part of region overlaps with unmap range.
-          i->start(end + 1U);
+          reinsert(i, end + 1U);
           break;
         }
     }
@@ -524,15 +531,10 @@ PUBLIC inline
 Mpu_region const *
 Mpu_regions::find(Mword addr) const
 {
-  for (auto const &i : _used_list)
+  if (auto n = _used_tree.last_less_equal_node(addr);
+      n && n->contains(addr))
     {
-      if (addr <= i->end())
-        {
-          if (addr >= i->start())
-            return i;
-          else
-            return nullptr;
-        }
+      return n;
     }
 
   return nullptr;
@@ -542,13 +544,7 @@ PUBLIC inline
 Mpu_region const *
 Mpu_regions::find_next(Mword addr) const
 {
-  for (auto const &i : _used_list)
-    {
-      if (addr < i->start())
-        return i;
-    }
-
-  return nullptr;
+  return _used_tree.lower_bound_node(addr);
 }
 
 /**
@@ -654,12 +650,12 @@ Mpu_regions::extend(Mpu_region *first, Mpu_region_attr attr, Mword start,
       Mpu_region *left = prev(first);
       if (left && left->end() + 1U >= start && left->attr() == attr)
         {
-          first->start(left->start());
-          updates.set_updated(index(left));
           erase(left);
+          reinsert(first, left->start());
+          updates.set_updated(index(left));
         }
       else
-        first->start(start);
+        reinsert(first, start);
     }
 
   // Extend to the right? Possibly merge with adjacent region. Again, check the
