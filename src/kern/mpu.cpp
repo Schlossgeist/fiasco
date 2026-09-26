@@ -1,6 +1,6 @@
 INTERFACE [mpu]:
 
-#include <cxx/dlist>
+#include <cxx/avl_tree>
 
 #include "bitmap.h"
 #include "l4_fpage.h"
@@ -52,6 +52,45 @@ public:
   {
     _rights &= ~rights;
   }
+};
+
+struct Mpu_region_base
+{
+  constexpr Mpu_region_base();
+  Mpu_region_base(Mword start, Mword end, Mpu_region_attr a);
+
+  constexpr Mword start() const;
+  constexpr Mword end() const;
+  constexpr Mpu_region_attr attr() const;
+
+  inline void start(Mword start);
+  inline void end(Mword end);
+  inline void attr(Mpu_region_attr attr);
+  inline void disable();
+
+  friend bool operator < (Mpu_region_base const &lhs, Mpu_region_base const &rhs)
+  { return lhs.end() < rhs.start(); }
+
+  constexpr bool contains(Mword addr) const
+  { return start() <= addr && addr <= end(); }
+};
+
+/**
+ * A single MPU region.
+ *
+ * Regions are organized as nodes in an AVL tree, keyed by start address. The
+ * architecture extends its base struct with the actual data for the hardware.
+ * All addresses are inclusive!
+ */
+struct Mpu_region
+: public Mpu_region_base,
+  public cxx::Avl_tree_node
+{
+  using Mpu_region_base::Mpu_region_base;
+
+  using Key_type = Mword;
+  static Key_type key_of(Mpu_region const *r)
+  { return r->start(); }
 };
 
 /**
@@ -191,34 +230,6 @@ public:
 };
 
 /**
- * A single MPU region.
- *
- * Regions are organized as a sorted, double linked, cyclic list. The
- * architecture extends the struct with the actual data for the hardware. All
- * addresses are inclusive!
- */
-struct Mpu_region_base : public cxx::D_list_item
-{
-  constexpr Mpu_region_base();
-  Mpu_region_base(Mword start, Mword end, Mpu_region_attr a);
-
-  constexpr Mword start() const;
-  constexpr Mword end() const;
-  constexpr Mpu_region_attr attr() const;
-
-  inline void start(Mword start);
-  inline void end(Mword end);
-  inline void attr(Mpu_region_attr attr);
-  inline void disable();
-
-  friend bool operator < (Mpu_region_base const &lhs, Mpu_region_base const &rhs)
-  { return lhs.end() < rhs.start(); }
-
-  constexpr bool contains(Mword addr) const
-  { return start() <= addr && addr <= end(); }
-};
-
-/**
  * List of MPU regions.
  *
  * The size is determined by Mem_layout::Mpu_regions. Any updates of the list
@@ -231,7 +242,7 @@ struct Mpu_region_base : public cxx::D_list_item
  */
 class Mpu_regions
 {
-  typedef cxx::D_list<Mpu_region_base> Region_list;
+  using Region_tree = cxx::Avl_tree<Mpu_region, Mpu_region>;
 
 public:
   /**
@@ -259,75 +270,102 @@ public:
   : _size(other._size), _reserved(other._reserved)
   {
     _reserved |= other._used_mask;
-    for (Mpu_region_base *i : other._used_list)
+    for (Mpu_region const &i : other._used_tree)
       {
-        unsigned idx = other.index(i);
-        Mpu_region_base *r = &(*this)[idx];
-        r->start(i->start());
-        r->end(i->end());
-        r->attr(i->attr());
+        unsigned idx = other.index(&i);
+        Mpu_region &r = (*this)[idx];
+        r.start(i.start());
+        r.end(i.end());
+        r.attr(i.attr());
       }
   }
 
-  Mpu_region_base const &operator[](unsigned i) const &
+  Mpu_region const &operator[](unsigned i) const &
   { return _regions[i]; }
-  Mpu_region_base const &operator[](unsigned i) const && = delete;
+  Mpu_region const &operator[](unsigned i) const && = delete;
 
   Mpu_regions_mask used()     const { return _used_mask; }
   Mpu_regions_mask reserved() const { return _reserved; }
   unsigned         size()     const { return _size; }
 
 private:
-  Mpu_region_base &operator[](unsigned i) &
+  Mpu_region &operator[](unsigned i) &
   { return _regions[i]; }
-  Mpu_region_base &operator[](unsigned i) && = delete;
+  Mpu_region &operator[](unsigned i) && = delete;
 
-  unsigned index(Mpu_region_base const *r) const
+  unsigned index(Mpu_region const *r) const
   { return r - _regions; }
 
-  Mpu_region_base *deref_iter(Region_list::Iterator iter) const
-  { return iter != _used_list.end() ? *iter : nullptr; }
+  Mpu_region *deref_iter(Region_tree::Iterator iter) const
+  { return iter != _used_tree.end() ? iter.operator->() : nullptr; }
 
-  Mpu_region_base *front() const
-  { return deref_iter(_used_list.begin()); }
+  Mpu_region *front() const
+  { return deref_iter(_used_tree.begin()); }
 
-  Mpu_region_base *next(Mpu_region_base *r) const
+  Mpu_region *next(Mpu_region *r) const
   {
-    auto iter = _used_list.iter(r);
+    Region_tree::Iterator iter = _used_tree.iter(r);
     return deref_iter(++iter);
   }
 
-  Mpu_region_base *prev(Mpu_region_base *r) const
+  Mpu_region *prev(Mpu_region *r) const
   {
-    auto iter = _used_list.iter(r);
-    return iter != _used_list.begin() ? *(--iter) : nullptr;
+    Region_tree::Iterator iter = _used_tree.iter(r);
+    return iter != _used_tree.begin() ? (--iter).operator->() : nullptr;
   }
 
-  Mpu_region_base *erase(Mpu_region_base *r)
+  Mpu_region *erase(Mpu_region *r)
   {
     _used_mask.clear_bit(index(r));
     r->disable();
-    return deref_iter(_used_list.erase(_used_list.iter(r)));
+    return _used_tree.erase(r->start());
   }
 
-  enum Insert { After, Before, Back };
-
-  void insert(Mpu_region_base *r, Insert mode, Mpu_region_base *pos)
+  bool insert(Mpu_region *r)
   {
     _used_mask.set_bit(index(r));
-    if (mode == After)
-      _used_list.insert_after(r, _used_list.iter(pos));
-    else if (mode == Before)
-      _used_list.insert_before(r, _used_list.iter(pos));
+    auto [node, was_not_in_tree_before] = _used_tree.insert(r);
+    return was_not_in_tree_before;
+  }
+
+  /**
+   * Route all modifications to `Mpu_region`s through these `modify`-functions,
+   * so that we can give the following correctness guarantees:
+   *   - updates to the key value (start) lead to reinsertion into the AVL tree
+   */
+  enum Modification { Start, End, Full };
+  template<Modification M>
+  void modify(Mpu_region *r, Mword value)
+  {
+    static_assert(M == Start || M == End,
+                  "Use modify<Full>(r, start, end, attr) for full assignment");
+    if constexpr (M == Start)
+      {
+        _used_tree.erase(r->start());
+        r->start(value);
+        auto [node, was_not_in_tree_before] = _used_tree.insert(r);
+        assert(was_not_in_tree_before);
+      }
     else
-      _used_list.push_back(r);
+      {
+        r->end(value);
+      }
+  }
+
+  template<Modification M>
+  void modify(Mpu_region *r, Mword start, Mword end, Mpu_region_attr attr)
+  {
+    static_assert(M == Full, "This overload is only for full assignment");
+    r->start(start);
+    r->end(end);
+    r->attr(attr);
   }
 
   unsigned _size;
   Mpu_regions_mask _reserved;
   Mpu_regions_mask _used_mask;  ///< Bit mask of occupied regions
-  Region_list _used_list;       ///< Sorted list (by address) of used regions
-  Mpu_region_base _regions[Mem_layout::Mpu_regions];
+  Region_tree _used_tree;       ///< Sorted tree (by address) of used regions
+  Mpu_region _regions[Mem_layout::Mpu_regions];
 };
 
 //---------------------------------------------------------------------------
@@ -357,25 +395,25 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
 {
   // Find existing regions left and right of the new region. In case of a
   // collision the existing regions need to be extended and optimized.
-  Mpu_region_base *left = nullptr;
-  Mpu_region_base *right = nullptr;
-  for (Mpu_region_base *i : _used_list)
+  Mpu_region *left = nullptr;
+  Mpu_region *right = nullptr;
+  for (Mpu_region &i : _used_tree)
     {
-      if (i->end() < start)
-        left = i;
-      else if (end < i->start())
+      if (i.end() < start)
+        left = &i;
+      else if (end < i.start())
         {
-          right = i;
+          right = &i;
           break;
         }
       else if (join) [[likely]]
-        return extend(i, attr, start, end); // Slow path in case of collisions
+        return extend(&i, attr, start, end); // Slow path in case of collisions
       else
         return Mpu_regions_update(Mpu_regions_update::Error_collision);
     }
 
   Mpu_regions_update updates;
-  Mpu_region_base *r = nullptr;
+  Mpu_region *r = nullptr;
 
   /*
    * Possibly join with left region. Can be safely extended if attributes
@@ -384,7 +422,7 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
   if (left && (left->end() + 1U == start) && left->attr() == attr && join)
     {
       updates.set_updated(index(left));
-      left->end(end);
+      modify<End>(left, end);
       r = left;
     }
 
@@ -399,12 +437,12 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
 
       if (r) // r == left
         {
-          r->end(right->end());
+          modify<End>(r, right->end());
           erase(right);
         }
       else
         {
-          right->start(start);
+          modify<Start>(right, start);
           r = right;
         }
     }
@@ -418,17 +456,9 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
   if (!r)
     return Mpu_regions_update(Mpu_regions_update::Error_no_mem);
 
-  r->start(start);
-  r->end(end);
-  r->attr(attr);
-
-  // insert into sorted list
-  if (left)
-    insert(r, After, left);
-  else if (right)
-    insert(r, Before, right);
-  else
-    insert(r, Back, nullptr);
+  // No reinsertion needed, because 'r' was free, therefore unused.
+  modify<Full>(r, start, end, attr);
+  insert(r);
 
   updates.set_updated(index(r));
   return updates;
@@ -454,7 +484,7 @@ Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
 {
   Mpu_regions_update updates;
 
-  Mpu_region_base *i = front();
+  Mpu_region *i = front();
 
   while (i && i->end() < start)
     i = next(i);
@@ -473,18 +503,17 @@ Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
       else if (i->start() < start && i->end() > end)
         {
           // unmap range falls inside of region -> try to split
-          Mpu_region_base *r = find_free();
+          Mpu_region *r = find_free();
           if (r)
             {
               updates.set_updated(index(r));
 
-              r->attr(i->attr());
-              r->start(end + 1U);
-              r->end(i->end());
+              // No reinsertion needed, because 'r' was free, therefore unused.
+              modify<Full>(r, end + 1U, i->end(), i->attr());
 
               i->end(start - 1U);
 
-              insert(r, After, i);
+              insert(r);
             }
           else
             {
@@ -499,13 +528,13 @@ Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
       else if (i->start() < start)
         {
           // Upper part of region overlaps with unmap range.
-          i->end(start - 1U);
+          modify<End>(i, start - 1U);
           i = next(i);
         }
       else
         {
           // Lower part of region overlaps with unmap range.
-          i->start(end + 1U);
+          modify<Start>(i, end + 1U);
           break;
         }
     }
@@ -521,34 +550,23 @@ Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
  * \return nullptr if no region was found, otherwise the pointer to the region.
  */
 PUBLIC inline
-Mpu_region_base const *
+Mpu_region const *
 Mpu_regions::find(Mword addr) const
 {
-  for (auto const &i : _used_list)
+  if (auto n = _used_tree.last_less_equal_node(addr);
+      n && n->contains(addr))
     {
-      if (addr <= i->end())
-        {
-          if (addr >= i->start())
-            return i;
-          else
-            return nullptr;
-        }
+      return n;
     }
 
   return nullptr;
 }
 
 PUBLIC inline
-Mpu_region_base const *
+Mpu_region const *
 Mpu_regions::find_next(Mword addr) const
 {
-  for (auto const &i : _used_list)
-    {
-      if (addr < i->start())
-        return i;
-    }
-
-  return nullptr;
+  return _used_tree.lower_bound_node(addr);
 }
 
 /**
@@ -590,7 +608,7 @@ Mpu_regions::dump() const
  * \return Pointer to free region, nullptr otherwise.
  */
 PRIVATE inline
-Mpu_region_base *
+Mpu_region *
 Mpu_regions::find_free(int slot = -1)
 {
   if (slot < 0)
@@ -623,7 +641,7 @@ Mpu_regions::find_free(int slot = -1)
  */
 PRIVATE inline
 Mpu_regions_update
-Mpu_regions::extend(Mpu_region_base *first, Mpu_region_attr attr, Mword start,
+Mpu_regions::extend(Mpu_region *first, Mpu_region_attr attr, Mword start,
                     Mword end)
 {
   // Make sure all regions that overlap have compatible attributes. Only then
@@ -651,15 +669,18 @@ Mpu_regions::extend(Mpu_region_base *first, Mpu_region_attr attr, Mword start,
   // overlapping region.
   if (first->start() > start)
     {
-      Mpu_region_base *left = prev(first);
+      Mpu_region *left = prev(first);
       if (left && left->end() + 1U >= start && left->attr() == attr)
         {
-          first->start(left->start());
-          updates.set_updated(index(left));
+          Mword new_start = left->start();
+          // Remove `left` before reassigning the start of `first` so there is
+          // no collision when reinserting into the AVL tree.
           erase(left);
+          modify<Start>(first, new_start);
+          updates.set_updated(index(left));
         }
       else
-        first->start(start);
+        modify<Start>(first, start);
     }
 
   // Extend to the right? Possibly merge with adjacent region. Again, check the
@@ -668,15 +689,15 @@ Mpu_regions::extend(Mpu_region_base *first, Mpu_region_attr attr, Mword start,
   // be covered.
   while (first->end() < end)
     {
-      Mpu_region_base *right = next(first);
+      Mpu_region *right = next(first);
       if (right && right->start() <= end + 1U && right->attr() == attr)
         {
-          first->end(right->end());
+          modify<End>(first, right->end());
           updates.set_updated(index(right));
           erase(right);
         }
       else
-        first->end(end);
+        modify<End>(first, end);
     }
 
   return updates;

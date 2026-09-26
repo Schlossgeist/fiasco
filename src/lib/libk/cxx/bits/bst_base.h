@@ -109,10 +109,10 @@ private:
 
 protected:
   /// Create uninitialized node
-  Bst_node() {}
+  constexpr Bst_node() {}
 
   /// Create initialized node
-  explicit Bst_node(bool) { _c[0] = _c[1] = 0; }
+  explicit Bst_node(bool) { _c[0] = _c[1] = nullptr; }
 };
 
 inline
