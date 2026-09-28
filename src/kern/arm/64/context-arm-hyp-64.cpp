@@ -322,15 +322,15 @@ Context::save_ext_vcpu_state_mpu(Vm_state *v)
 {
   v->mpu.prselr = Mpu_arm_el1::prselr();
 
-#define SAVE_REGION(i) \
-  do \
-    { \
-      Mword b = Mpu_arm_el1::prbar##i(); \
-      Mword l = Mpu_arm_el1::prlar##i(); \
-      v->mpu.r[31-idx].prbar = b; \
-      v->mpu.r[31-idx].prlar = l; \
-      --idx; \
-    } \
+#define SAVE_REGION(i)                      \
+  do                                        \
+    {                                       \
+      Mword b = Mpu_arm_el1::prbar<(i)>();  \
+      Mword l = Mpu_arm_el1::prlar<(i)>();  \
+      v->mpu.r[31-idx].prbar = b;           \
+      v->mpu.r[31-idx].prlar = l;           \
+      --idx;                                \
+    }                                       \
   while (false)
 
   // Directly skip non-existing regions.
