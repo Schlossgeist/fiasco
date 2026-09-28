@@ -262,7 +262,7 @@ public:
     for (Mpu_region *i : other._used_list)
       {
         unsigned idx = other.index(i);
-        Mpu_region *r = &_regions[idx];
+        Mpu_region *r = &(*this)[idx];
         r->start(i->start());
         r->end(i->end());
         r->attr(i->attr());
@@ -278,6 +278,10 @@ public:
   unsigned         size()     const { return _size; }
 
 private:
+  Mpu_region &operator[](unsigned i) &
+  { return _regions[i]; }
+  Mpu_region &operator[](unsigned i) && = delete;
+
   unsigned index(Mpu_region const *r) const
   { return r - _regions; }
 
@@ -558,10 +562,11 @@ Mpu_regions::dump() const
   printf("Used MPU regions:\n");
   while (i < _used_mask.size() && (i = _used_mask.ffs(i)))
     {
-      auto attr = _regions[i - 1].attr();
+      auto const& r    = (*this)[i - 1];
+      auto const& attr = r.attr();
       printf("  [" L4_MWORD_FMT ".." L4_MWORD_FMT ", %c%c, %cR%c%c]@%u\n",
-             _regions[i - 1].start(),
-             _regions[i - 1].end(),
+             r.start(),
+             r.end(),
              attr.enabled() ? '+' : '-',
              (attr.type() == L4_snd_item::Memory_type::Normal())
                 ? 'N'
@@ -594,16 +599,16 @@ Mpu_regions::find_free(int slot = -1)
       avail |= _used_mask;
       avail.invert();
       unsigned i = avail.ffs(0);
-      if (i == 0 || i > _size)
+      if (i == 0 || i > size())
         return nullptr;
 
-      return &_regions[i - 1];
+      return &(*this)[i - 1];
     }
   else
     {
       if (_used_mask[slot])
         return nullptr;
-      return &_regions[slot];
+      return &(*this)[slot];
     }
 }
 
