@@ -2,10 +2,14 @@ INTERFACE [mpu]:
 
 #include <cxx/avl_tree>
 
+#include "arithmetic.h"
 #include "bitmap.h"
+#include "buddy_alloc.h"
+#include "config.h"
 #include "l4_fpage.h"
 #include "l4_msg_item.h"
 #include "mem_layout.h"
+#include "panic.h"
 #include "warn.h"
 
 class Mpu_regions;
@@ -84,6 +88,116 @@ struct Mpu_region : public cxx::Avl_tree_node
 
   constexpr bool contains(Mword addr) const
   { return start() <= addr && addr <= end(); }
+};
+
+using Mpu_region_block = Mpu_region[Config::Mpultiplex_block_size];
+
+/**
+ * Base for classes dealing with a growing number of MPU regions.
+ *
+ * Provides the storage as well as means to access stored regions and
+ * reserve space for additional regions.
+ */
+template<class TYPE, typename ALLOC>
+class Mpu_region_block_storage
+{
+public:
+  explicit Mpu_region_block_storage(size_t size = Config::Mpultiplex_block_size)
+  : _size(Config::Mpultiplex_block_size)
+  , _blocks(&_static_regions)
+  {
+    if (size > Config::Mpultiplex_block_size)
+      _size = reserve(size);
+  }
+
+  inline unsigned size() const { return _size; }
+
+  TYPE &operator[](unsigned i)
+  {
+    size_t idx = i / regions_per_block();
+    size_t pos = i % regions_per_block();
+
+    Mpu_region_block *current_block = &_blocks[idx];
+    return (*current_block)[pos];
+  }
+
+  TYPE const &operator[](unsigned i) const
+  {
+    size_t idx = i / regions_per_block();
+    size_t pos = i % regions_per_block();
+
+    Mpu_region_block const *current_block = &_blocks[idx];
+    return (*current_block)[pos];
+  }
+
+  unsigned index(TYPE const *r) const
+  {
+    Mpu_region_block const *current_block = _blocks;
+    for (unsigned block_index = 0; block_index < size(); block_index += regions_per_block())
+      {
+        unsigned i = r - *current_block;
+        if (block_index <= i && i < block_index + regions_per_block())
+          return i;
+
+        current_block++;
+      }
+
+    panic("Searched index of Mpu_region that is not part of this "
+          "Mpu_region_block_storage object.");
+  }
+
+  /**
+   * Reserves space to be able to store more regions.
+   *
+   * \param new_size  The amount to reserve space for.
+   *
+   * \return The amount that space has actually been reserved for.
+   *         May be larger than what was requested.
+   */
+  size_t reserve(size_t new_size)
+  {
+    if (new_size <= size())
+      {
+        WARNX(Info, "Tried to reserve no additional space for this "
+                    "Mpu_region_block_storage object!");
+        return size();
+      }
+
+    // calculate how many new new blocks to allocate
+    unsigned size_diff = new_size - size();
+    unsigned nr_blocks_needed = cxx::div_ceil(size_diff, regions_per_block());
+
+    auto new_blocks = static_cast<Mpu_region_block *>(
+      _allocator.alloc(sizeof(Mpu_region_block) * nr_blocks_needed)
+    );
+
+    size_t old_blocks_size
+      = (size() / regions_per_block()) * sizeof(Mpu_region_block);
+    memcpy(new_blocks, _blocks, old_blocks_size);
+
+    // Free the old blocks or clear the no-longer-used _static_regions.
+    if (old_blocks_size > sizeof(Mpu_region_block))
+      _allocator.free(_blocks, old_blocks_size);
+    else
+      new (_blocks) Mpu_region_block();
+
+    _blocks = new_blocks;
+    _size += nr_blocks_needed * regions_per_block();
+
+    return size();
+  }
+
+private:
+  static constexpr unsigned regions_per_block()
+  { return Config::Mpultiplex_block_size; }
+
+  static unsigned blocks_needed_for_nr_regions(unsigned nr_regions)
+  { return cxx::div_ceil(nr_regions, regions_per_block()); }
+
+  unsigned _size;
+  ALLOC _allocator;
+  Mpu_region_block _static_regions;
+  Mpu_region_block *_blocks;
 };
 
 /**
@@ -190,6 +304,29 @@ public:
 class Mpu
 {
 public:
+  class Block_allocator
+  : public Buddy_t_base<cxx::log2u(sizeof(Mpu_region_block)), 16>
+  {
+  public:
+    inline void *
+    alloc(unsigned long size)
+    {
+      (void) size;
+      panic("alloc should not be called right now!");
+    }
+
+    inline void
+    free(void *block, unsigned long size)
+    {
+      (void) block;
+      (void) size;
+      panic("free should not be called right now!");
+    }
+  };
+
+  class Dynamic_bitmap_allocator : public Buddy_t_base<10, 11>
+  {};
+
   /**
    * Initialize MPU.
    *
@@ -234,6 +371,7 @@ public:
  * responsibility of the caller.
  */
 class Mpu_regions
+: private Mpu_region_block_storage<Mpu_region, Mpu::Block_allocator>
 {
   using Region_tree = cxx::Avl_tree<Mpu_region, Mpu_region>;
 
@@ -244,11 +382,8 @@ public:
    * \param reserved  Map of regions that are not allocatable.
    */
   explicit Mpu_regions(Mpu_regions_mask const &reserved)
-  : _size(Mpu::regions()), _reserved(reserved)
-  {
-    if (_size > Mem_layout::Mpu_regions)
-      _size = Mem_layout::Mpu_regions;
-  }
+  : Mpu_region_block_storage(Mpu::regions()), _reserved(reserved)
+  {}
 
   enum class Init { Reserved_regions };
 
@@ -260,7 +395,7 @@ public:
    * context switches, the used regions of the other object are still copied.
    */
   explicit Mpu_regions(Mpu_regions const &other, Init)
-  : _size(other._size), _reserved(other._reserved)
+  : Mpu_region_block_storage(other.size()), _reserved(other._reserved)
   {
     _reserved |= other._used_mask;
     for (Mpu_region const &i : other._used_tree)
@@ -274,20 +409,17 @@ public:
   }
 
   Mpu_region const &operator[](unsigned i) const &
-  { return _regions[i]; }
+  { return Mpu_region_block_storage::operator[](i); }
   Mpu_region const &operator[](unsigned i) const && = delete;
 
   Mpu_regions_mask used()     const { return _used_mask; }
   Mpu_regions_mask reserved() const { return _reserved; }
-  unsigned         size()     const { return _size; }
+  unsigned         size()     const { return Mpu_region_block_storage::size(); }
 
 private:
   Mpu_region &operator[](unsigned i) &
-  { return _regions[i]; }
+  { return Mpu_region_block_storage::operator[](i); }
   Mpu_region &operator[](unsigned i) && = delete;
-
-  unsigned index(Mpu_region const *r) const
-  { return r - _regions; }
 
   Mpu_region *deref_iter(Region_tree::Iterator iter) const
   { return iter != _used_tree.end() ? iter.operator->() : nullptr; }
@@ -334,11 +466,9 @@ private:
     return node;
   }
 
-  unsigned _size;
   Mpu_regions_mask _reserved;
   Mpu_regions_mask _used_mask;  ///< Bit mask of occupied regions
   Region_tree _used_tree;       ///< Sorted tree (by address) of used regions
-  Mpu_region _regions[Mem_layout::Mpu_regions];
 };
 
 //---------------------------------------------------------------------------
