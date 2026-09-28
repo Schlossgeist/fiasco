@@ -59,71 +59,27 @@ struct Mpu_arm_el1
   static void prenr(Mword v)
   { asm volatile("msr S3_0_c6_c1_1, %0" : : "r"(v)); } // PRENR_EL1
 
-  static Mword prbar0()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c8_0" : "=r"(v)); return v; }
-  static Mword prbar1()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c8_4" : "=r"(v)); return v; }
-  static Mword prbar2()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c9_0" : "=r"(v)); return v; }
-  static Mword prbar3()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c9_4" : "=r"(v)); return v; }
-  static Mword prbar4()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c10_0" : "=r"(v)); return v; }
-  static Mword prbar5()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c10_4" : "=r"(v)); return v; }
-  static Mword prbar6()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c11_0" : "=r"(v)); return v; }
-  static Mword prbar7()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c11_4" : "=r"(v)); return v; }
-  static Mword prbar8()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c12_0" : "=r"(v)); return v; }
-  static Mword prbar9()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c12_4" : "=r"(v)); return v; }
-  static Mword prbar10()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c13_0" : "=r"(v)); return v; }
-  static Mword prbar11()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c13_4" : "=r"(v)); return v; }
-  static Mword prbar12()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c14_0" : "=r"(v)); return v; }
-  static Mword prbar13()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c14_4" : "=r"(v)); return v; }
-  static Mword prbar14()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c15_0" : "=r"(v)); return v; }
-  static Mword prbar15()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c15_4" : "=r"(v)); return v; }
+  template<unsigned I>
+  static Mword prbar()
+  {
+    Mword v;
+    asm volatile("mrs %0, S3_0_c6_c%c1_%c2"
+                 : "=r"(v)
+                 : "i"(8 + (I / 2) % 8),
+                   "i"(0 + (I % 2) * 4));
+    return v;
+  }
 
-  static Mword prlar0()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c8_1" : "=r"(v)); return v; }
-  static Mword prlar1()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c8_5" : "=r"(v)); return v; }
-  static Mword prlar2()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c9_1" : "=r"(v)); return v; }
-  static Mword prlar3()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c9_5" : "=r"(v)); return v; }
-  static Mword prlar4()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c10_1" : "=r"(v)); return v; }
-  static Mword prlar5()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c10_5" : "=r"(v)); return v; }
-  static Mword prlar6()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c11_1" : "=r"(v)); return v; }
-  static Mword prlar7()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c11_5" : "=r"(v)); return v; }
-  static Mword prlar8()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c12_1" : "=r"(v)); return v; }
-  static Mword prlar9()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c12_5" : "=r"(v)); return v; }
-  static Mword prlar10()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c13_1" : "=r"(v)); return v; }
-  static Mword prlar11()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c13_5" : "=r"(v)); return v; }
-  static Mword prlar12()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c14_1" : "=r"(v)); return v; }
-  static Mword prlar13()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c14_5" : "=r"(v)); return v; }
-  static Mword prlar14()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c15_1" : "=r"(v)); return v; }
-  static Mword prlar15()
-  { Mword v; asm volatile("mrs %0, S3_0_c6_c15_5" : "=r"(v)); return v; }
+  template<unsigned I>
+  static Mword prlar()
+  {
+    Mword v;
+    asm volatile("mrs %0, S3_0_c6_c%c1_%c2"
+                 : "=r"(v)
+                 : "i"(8 + (I / 2) % 8),
+                   "i"(1 + (I % 2) * 4));
+    return v;
+  }
 
   // Attention: there is no PRBAR0_EL1/PRLAR0_EL1 register. They alias with
   // PRBAR_EL1 and PRLAR_EL1!
