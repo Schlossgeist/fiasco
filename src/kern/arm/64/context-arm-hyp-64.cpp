@@ -368,12 +368,13 @@ IMPLEMENT inline NEEDS["mpu.h"]
 void
 Context::load_ext_vcpu_state_mpu(Vm_state const *v)
 {
-#define LOAD_REGION(i) \
-  do \
-    { \
-      Mpu_arm_el1::prxar##i(v->mpu.r[31-idx].prbar, v->mpu.r[31-idx].prlar); \
-      --idx; \
-    } \
+#define LOAD_REGION(i)                                  \
+  do                                                    \
+    {                                                   \
+      Mpu_arm_el1::prxar<(i)>(v->mpu.r[31-idx].prbar,   \
+                              v->mpu.r[31-idx].prlar);  \
+      --idx;                                            \
+    }                                                   \
   while (false)
 
   // Directly skip non-existing regions.
