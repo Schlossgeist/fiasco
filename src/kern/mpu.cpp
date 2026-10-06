@@ -13,6 +13,7 @@ INTERFACE [mpu]:
 #include "warn.h"
 
 class Mpu_regions;
+class Mpu_regions_mask;
 
 /**
  * Generic, implementation agnostic MPU region attributes.
@@ -183,6 +184,68 @@ private:
 };
 
 /**
+ * Interface to the CPUs MPU.
+ */
+class Mpu
+{
+public:
+  class Block_allocator
+  : public Buddy_t_base<cxx::log2u(sizeof(Mpu_region_block) - 1) + 1, 16>
+  {
+  public:
+    inline void *
+    alloc(unsigned long size)
+    {
+      (void) size;
+      panic("alloc should not be called right now!");
+    }
+
+    inline void
+    free(void *block, unsigned long size)
+    {
+      (void) block;
+      (void) size;
+      panic("free should not be called right now!");
+    }
+  };
+
+  class Dynamic_bitmap_allocator
+  : public Buddy_t_base<cxx::log2u((Config::Mpultiplex_block_size / 8) - 1) + 1, 16>
+  {};
+
+  /**
+   * Initialize MPU.
+   *
+   * Brings the MPU into a defined state. Called by platform code before any
+   * regions are setup.
+   */
+  static void init();
+
+  /**
+   * Write back changes to hardware.
+   *
+   * \param regions  The Mpu_regions object that was updated.
+   * \param touched  Impacted regions.
+   * \param inplace  Update region directly instead of performing a safe
+   *                 disable-update-enable sequence.
+   */
+  static void sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
+                   bool inplace = false);
+
+  /**
+   * Update MPU with new regions list.
+   *
+   * Write back all `regions` into hardware.
+   */
+  static void update(Mpu_regions const &regions);
+
+  /**
+   * Get number of supported regions.
+   */
+  static unsigned regions();
+};
+
+/**
  * Bit mask of MPU regions.
  */
 class Mpu_regions_mask : public Bitmap<Mem_layout::Mpu_regions>
@@ -278,68 +341,6 @@ public:
    */
   Error error() const
   { return _updates[0] ? Error_collision : Error_no_mem; }
-};
-
-/**
- * Interface to the CPUs MPU.
- */
-class Mpu
-{
-public:
-  class Block_allocator
-  : public Buddy_t_base<cxx::log2u(sizeof(Mpu_region_block) - 1) + 1, 16>
-  {
-  public:
-    inline void *
-    alloc(unsigned long size)
-    {
-      (void) size;
-      panic("alloc should not be called right now!");
-    }
-
-    inline void
-    free(void *block, unsigned long size)
-    {
-      (void) block;
-      (void) size;
-      panic("free should not be called right now!");
-    }
-  };
-
-  class Dynamic_bitmap_allocator
-  : public Buddy_t_base<cxx::log2u((Config::Mpultiplex_block_size / 8) - 1) + 1, 16>
-  {};
-
-  /**
-   * Initialize MPU.
-   *
-   * Brings the MPU into a defined state. Called by platform code before any
-   * regions are setup.
-   */
-  static void init();
-
-  /**
-   * Write back changes to hardware.
-   *
-   * \param regions  The Mpu_regions object that was updated.
-   * \param touched  Impacted regions.
-   * \param inplace  Update region directly instead of performing a safe
-   *                 disable-update-enable sequence.
-   */
-  static void sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
-                   bool inplace = false);
-
-  /**
-   * Update MPU with new regions list.
-   *
-   * Write back all `regions` into hardware.
-   */
-  static void update(Mpu_regions const &regions);
-
-  /**
-   * Get number of supported regions.
-   */
-  static unsigned regions();
 };
 
 /**
