@@ -408,7 +408,7 @@ Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
           bool inplace)
 {
   unsigned i = 0;
-  while (i < touched.size() && (i = touched.ffs(i)))
+  while (i < min(Mpu::regions(), touched.size()) && (i = touched.ffs(i)))
     {
       Mpu_arm::prselr(i - 1);
       Mem::isb();
@@ -447,7 +447,7 @@ Mpu::update(Mpu_regions const &regions)
 
   // Directly skip non-existing regions. We don't support more than 32 regions.
   static_assert(Mem_layout::Mpu_regions <= 32, "No more than 32 regions!");
-  switch (regions.size())
+  switch (min(Mpu::regions(), regions.size()))
     {
       default:
       case 32: UPDATE(31); [[fallthrough]];

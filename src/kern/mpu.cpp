@@ -9,6 +9,7 @@ INTERFACE [mpu]:
 #include "l4_fpage.h"
 #include "l4_msg_item.h"
 #include "mem_layout.h"
+#include "minmax.h"
 #include "panic.h"
 #include "warn.h"
 
@@ -136,6 +137,7 @@ public:
    * \return The amount that space has actually been reserved for.
    *         May be larger than what was requested.
    */
+  [[gnu::optimize(0)]]
   size_t reserve(size_t new_size)
   {
     if (new_size <= size())
@@ -148,19 +150,22 @@ public:
     // calculate how many new new blocks to allocate
     unsigned size_diff = new_size - size();
     unsigned nr_blocks_needed = cxx::div_ceil(size_diff, regions_per_block());
+    unsigned current_nr_blocks = size() / regions_per_block();
 
-    auto new_regions = static_cast<Mpu_region *>(
-      _allocator.alloc(sizeof(Mpu_region_block) * nr_blocks_needed)
-    );
+    auto new_regions = static_cast<Mpu_region *>(_allocator.alloc(
+        sizeof(Mpu_region_block) * (nr_blocks_needed + current_nr_blocks)
+    ));
+    assert(new_regions);
+
     for (unsigned i = 0; i < size(); ++i)
-    {
-      auto const& r = _regions[i];
-      new (&new_regions[i]) Mpu_region(r.start(), r.end(), r.attr());
-    }
+      {
+        auto const& r = _regions[i];
+        new (&new_regions[i]) Mpu_region(r.start(), r.end(), r.attr());
+      }
 
     // Free the old blocks or clear the no-longer-used _static_regions.
     if (size() > regions_per_block())
-      _allocator.free(_regions, (size() / regions_per_block()) * sizeof(Mpu_region_block));
+      _allocator.free(_regions, sizeof(Mpu_region_block) * current_nr_blocks);
     else
       new (_regions) Mpu_region_block();
 
@@ -170,6 +175,9 @@ public:
     return size();
   }
 
+protected:
+  ALLOC _allocator;
+
 private:
   static constexpr unsigned regions_per_block()
   { return Config::Mpultiplex_block_size; }
@@ -178,7 +186,6 @@ private:
   { return cxx::div_ceil(nr_regions, regions_per_block()); }
 
   unsigned _size;
-  ALLOC _allocator;
   Mpu_region_block _static_regions;
   Mpu_region *_regions;
 };
@@ -189,30 +196,6 @@ private:
 class Mpu
 {
 public:
-  class Block_allocator
-  : public Buddy_t_base<cxx::log2u(sizeof(Mpu_region_block) - 1) + 1, 16>
-  {
-  public:
-    inline void *
-    alloc(unsigned long size)
-    {
-      (void) size;
-      panic("alloc should not be called right now!");
-    }
-
-    inline void
-    free(void *block, unsigned long size)
-    {
-      (void) block;
-      (void) size;
-      panic("free should not be called right now!");
-    }
-  };
-
-  class Dynamic_bitmap_allocator
-  : public Buddy_t_base<cxx::log2u((Config::Mpultiplex_block_size / 8) - 1) + 1, 16>
-  {};
-
   /**
    * Initialize MPU.
    *
@@ -371,7 +354,7 @@ public:
    * \param reserved  Map of regions that are not allocatable.
    */
   explicit Mpu_regions(Mpu_regions_mask const &reserved)
-  : Mpu_region_block_storage(Mpu::regions()), _reserved(reserved)
+  : Mpu_region_block_storage(Config::Mpultiplex_block_size), _reserved(reserved)
   {}
 
   enum class Init { Reserved_regions };
@@ -457,23 +440,155 @@ private:
 
   size_t reserve(size_t new_size)
   {
+    _used_tree.remove_all([](Mpu_region *){});
     Mpu_region_block_storage::reserve(new_size);
 
     // Reconstruct tree at new location
-    _used_tree.remove_all([](Mpu_region *){});
     for (unsigned i = 0; i < _used_mask.size(); ++i)
-    {
-      if (_used_mask[i])
-        _used_tree.insert(&(*this)[i]);
-    }
+      {
+        if (_used_mask[i])
+          _used_tree.insert(&(*this)[i]);
+      }
 
     return size();
+  }
+
+  size_t grow()
+  {
+    size_t const new_size = size() * 2;
+    (void) _reserved.resize(new_size);
+    (void) _used_mask.resize(new_size);
+    (void) reserve(new_size);
+    printf("[%p] Mpu_regions grew to %zu\n", this, new_size);
+
+    // _allocator.dump();
+
+    return new_size;
   }
 
   Mpu_regions_mask _reserved;
   Mpu_regions_mask _used_mask;  ///< Bit mask of occupied regions
   Region_tree _used_tree;       ///< Sorted tree (by address) of used regions
 };
+
+INTERFACE [mpu && mpultiplex]:
+
+EXTENSION class Mpu
+{
+public:
+  using Buddy_block_alloc 
+    = Buddy_t_base<2 * sizeof(Mpu_region_block), 4>;
+  class Block_allocator : public Buddy_block_alloc
+  {
+  public:
+    void *alloc(unsigned long size)
+    { return Mpu::block_allocator()->alloc(size); }
+    void free(void *block, unsigned long size)
+    { Mpu::block_allocator()->free(block, size); }
+    void dump() const
+    { Mpu::block_allocator()->dump(); }
+  };
+
+  using Buddy_bitmap_alloc
+    = Buddy_t_base<max(2 * Config::Mpultiplex_block_size / 8, 24U), 2>;
+  class Dynamic_bitmap_allocator : public Buddy_bitmap_alloc
+  {
+  public:
+    void *alloc(unsigned long size)
+    { return Mpu::bitmap_allocator()->alloc(size); }
+    void free(void *block, unsigned long size)
+    { Mpu::bitmap_allocator()->free(block, size); }
+  };
+
+  /**
+   * Initialize allocation functionality used by MPU code.
+   */
+  static void init_alloc();
+
+private:
+  static void *request_kmem(size_t size);
+
+  enum Initial_alloc_sizes : size_t {
+    Block   = Buddy_block_alloc::Min_size * 32,
+    Bitmap  = Buddy_bitmap_alloc::Max_size * 64,
+  };
+
+  static constexpr unsigned FREEMAP_STORAGE_ELEMENTS = 16;
+  using Freemap_storage = unsigned long[FREEMAP_STORAGE_ELEMENTS];
+  static Global_data<Freemap_storage> _freemap_storage;
+
+  template<class A>
+  static void
+  setup_allocator(A *alloc, size_t initial_size, unsigned *freemap_storage_pos)
+  {
+    void *initial_mem = request_kmem(initial_size);
+
+    auto   min_addr = reinterpret_cast<Address>(initial_mem);
+    size_t max_addr = min_addr + initial_size - 1;
+    auto   freemap_size = A::free_map_bytes(min_addr, max_addr);
+
+    unsigned long *freemap_mem = &_freemap_storage[*freemap_storage_pos];
+    *freemap_storage_pos += freemap_size / sizeof(unsigned long) + 1;
+
+    alloc->init(min_addr);
+    alloc->setup_free_map(freemap_mem, freemap_size);
+    alloc->add_mem(initial_mem, initial_size);
+  }
+};
+
+//---------------------------------------------------------------------------
+IMPLEMENTATION [mpu && mpultiplex]:
+
+#include "kmem_alloc.h"
+#include "ram_quota.h"
+
+static DEFINE_GLOBAL_PRIO(EARLY_INIT_PRIO) Global_data<Mpu::Buddy_block_alloc> _block_alloc;
+static DEFINE_GLOBAL_PRIO(EARLY_INIT_PRIO) Global_data<Mpu::Buddy_bitmap_alloc> _bitmap_alloc;
+
+DEFINE_GLOBAL Global_data<Mpu::Freemap_storage> Mpu::_freemap_storage;
+
+PRIVATE static
+Mpu::Buddy_block_alloc *
+Mpu::block_allocator()
+{
+  return &_block_alloc;
+}
+
+PRIVATE static
+Mpu::Buddy_bitmap_alloc *
+Mpu::bitmap_allocator()
+{
+  return &_bitmap_alloc;
+}
+
+IMPLEMENT static inline NEEDS["kmem_alloc.h", "ram_quota.h"]
+void *
+Mpu::request_kmem(size_t size)
+{
+  auto const& q = Ram_quota::root.unwrap();
+  void *mem = Kmem_alloc::allocator()->q_alloc(q, Bytes(size));
+  assert(mem);
+  return mem;
+}
+
+IMPLEMENT static
+void
+Mpu::init_alloc()
+{
+  unsigned fm_index = 0;
+  setup_allocator(&_block_alloc,  Initial_alloc_sizes::Block, &fm_index);
+  setup_allocator(&_bitmap_alloc, Initial_alloc_sizes::Bitmap, &fm_index);
+
+  // Increase FREEMAP_STORAGE_ELEMENTS if this is hit.
+  assert(sizeof(unsigned long) * fm_index < sizeof(_freemap_storage));
+  printf("MPU: used %zu bytes of freemap storage (of %zu allocated bytes)\n",
+         sizeof(unsigned long) * fm_index, sizeof(_freemap_storage));
+
+  _block_alloc->dump();
+  _bitmap_alloc->dump();
+
+  printf("MPU: %i regions in Hardware\n", Mpu::regions());
+}
 
 //---------------------------------------------------------------------------
 IMPLEMENTATION [mpu]:
@@ -516,10 +631,10 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
       else if (join) [[likely]]
         return extend(&i, attr, start, end); // Slow path in case of collisions
       else
-        return Mpu_regions_update(Mpu_regions_update::Error_collision);
+        return Mpu_regions_update(Mpu_regions_update::Error_collision, size());
     }
 
-  Mpu_regions_update updates;
+  Mpu_regions_update updates(size());
   Mpu_region *r = nullptr;
 
   /*
@@ -558,10 +673,16 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
   if (r)
     return updates;
 
-  // Could not join an existing region. We need to allocate a new slot.
   r = find_free(slot);
   if (!r)
-    return Mpu_regions_update(Mpu_regions_update::Error_no_mem);
+    {
+      size_t new_size = grow();
+      r = find_free(slot);
+      assert(r);
+
+      Mpu_regions_update m(new_size);
+      updates |= m;
+    }
 
   // No reinsertion needed, because 'r' was free, therefore unused.
   r->start(start);
@@ -592,7 +713,7 @@ PUBLIC inline NEEDS[Mpu_regions::find_free]
 Mpu_regions_update
 Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
 {
-  Mpu_regions_update updates;
+  Mpu_regions_update updates(size());
 
   Mpu_region *i = front();
 
@@ -614,27 +735,26 @@ Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
         {
           // unmap range falls inside of region -> try to split
           Mpu_region *r = find_free();
-          if (r)
+          if (!r)
             {
-              updates.set_updated(index(r));
+              size_t new_size = grow();
+              r = find_free();
+              assert(r);
 
-              // No reinsertion needed, because 'r' was free, therefore unused.
-              r->start(end + 1U);
-              r->end(i->end());
-              r->attr(i->attr());
-
-              i->end(start - 1U);
-
-              insert(r);
+              Mpu_regions_update m(new_size);
+              updates |= m;
             }
-          else
-            {
-              // no further regions available -> delete whole region
-              WARN("Dropped whole region [" L4_MWORD_FMT ":" L4_MWORD_FMT
-                   "] while deleting  [" L4_MWORD_FMT ":" L4_MWORD_FMT "]\n",
-                   i->start(), i->end(), start, end);
-              erase(i);
-            }
+
+          updates.set_updated(index(r));
+
+          // No reinsertion needed, because 'r' was free, therefore unused.
+          r->start(end + 1U);
+          r->end(i->end());
+          r->attr(i->attr());
+
+          i->end(start - 1U);
+
+          insert(r);
           break;
         }
       else if (i->start() < start)
