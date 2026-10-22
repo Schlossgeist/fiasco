@@ -5,6 +5,7 @@ INTERFACE:
 #include <cxx/hlist>
 #include "bitmap.h"
 #include "config.h"
+#include "minmax.h"
 
 class Buddy_base
 {
@@ -26,7 +27,7 @@ protected:
   typedef cxx::H_list_bss<Head> B_list;
 };
 
-template< unsigned long MIN_LOG2_SIZE, int NUM_SIZES>
+template< unsigned long MIN_SIZE, int NUM_SIZES>
 class Buddy_t_base : public Buddy_base
 {
   enum { Debug_size_mismatch = 0 };
@@ -47,11 +48,17 @@ private:
 public:
   enum : unsigned long
   {
-    Min_log2_size = MIN_LOG2_SIZE,
-    Min_size = 1UL << MIN_LOG2_SIZE,
+    Min_size = MIN_SIZE,
     Num_sizes = NUM_SIZES,
     Max_size = Min_size << (NUM_SIZES - 1),
   };
+
+  static_assert(Num_sizes > 0,
+                "Buddy_t_base: allocator must have at least one size class");
+  static_assert(Min_size >= sizeof(Head),
+                "Buddy_t_base: minimum block size must fit free-list head");
+  static_assert((Min_size % alignof(Head)) == 0,
+                "Buddy_t_base: minimum block size must satisfy free-list head alignment");
 
   static constexpr size_t
   free_map_bytes(unsigned long min_addr, unsigned long max_addr)
@@ -66,7 +73,7 @@ public:
 
   static constexpr unsigned long
   calc_base_addr(unsigned long min_addr)
-  { return min_addr & ~(Max_size - 1); }
+  { return min_addr - min_addr % Max_size; }
 
 private:
 
@@ -96,17 +103,27 @@ private:
     // beyond the bitmap.
     auto max_mem_size = calc_max_mem_size(min_addr, max_addr);
     unsigned long bits = (max_mem_size + Min_size - 1) / Min_size;
-    if ((max_mem_size & (Max_size - 1)) > 0)
+    if (max_mem_size % Max_size > 0)
       bits += 1;
     return bits;
   }
+
+  // Index of the Min_size-unit at address 'addr', counted from '_base'.
+  unsigned long
+  unit_of(unsigned long addr) const
+  { return (addr - _base) / Min_size; }
+
+  // Address of the Min_size-unit with the given index.
+  unsigned long
+  addr_of(unsigned long index) const
+  { return _base + index * Min_size; }
 
   B_list _free[Num_sizes];
   Freemap _free_map;
 };
 
-
-class Buddy_alloc : public Buddy_t_base<10, 11>
+constexpr auto Buddy_alloc_min_size = 1UL << 10;
+class Buddy_alloc : public Buddy_t_base<Buddy_alloc_min_size, 11>
 {
 };
 
@@ -124,21 +141,24 @@ inline
 Buddy_base::Head *
 Buddy_t_base<A,B>::buddy(void *block, unsigned long index, Head **new_block)
 {
-  unsigned long const size = Min_size << index;
-  unsigned long const n_size = size << 1;
   if (index + 1 >= Num_sizes)
     return nullptr;
-  unsigned long b = reinterpret_cast<unsigned long>(block);
-  unsigned long _buddy = b & ~(n_size-1);
-  *new_block = reinterpret_cast<Head*>(_buddy);
-  if (_buddy == b)
-    _buddy += size;
 
-  Head * const _buddy_h = reinterpret_cast<Head*>(_buddy);
+  // Buddy calculation is based on units (multiples of Min_size counted from
+  // _base). A block of size class 'index' spans (1 << index) units and starts
+  // at a unit number that is a multiple of (1 << index). The unit number of
+  // the buddy of a given block differs only in this 'index' bit and the
+  // merged block starts at the lower of the two.
+  unsigned long const unit = unit_of(reinterpret_cast<unsigned long>(block));
+  unsigned long const buddy_unit = unit ^ (1UL << index);
+  unsigned long const merged_unit = min(unit, buddy_unit);
+
+  *new_block = reinterpret_cast<Head*>(addr_of(merged_unit));
+  Head * const _buddy_h = reinterpret_cast<Head*>(addr_of(buddy_unit));
 
   // this test may access one bit behind our maximum, this is safe because
   // we allocated an extra bit
-  if (_free_map[(_buddy - _base)/Min_size] && _buddy_h->index == index)
+  if (_free_map[buddy_unit] && _buddy_h->index == index)
     return _buddy_h;
 
   return nullptr;
@@ -150,7 +170,9 @@ inline
 void
 Buddy_t_base<A,B>::free(void *block, unsigned long size)
 {
+  assert (size >= Min_size);
   assert (reinterpret_cast<unsigned long>(block) >= _base);
+  assert ((reinterpret_cast<unsigned long>(block) - _base) % Min_size == 0);
   //assert ((unsigned long)block - _base < Max_mem);
   assert (!_free_map[(reinterpret_cast<unsigned long>(block) - _base)
                      / Min_size]);
@@ -170,13 +192,13 @@ Buddy_t_base<A,B>::free(void *block, unsigned long size)
       Head *n;
       Head *b = buddy(block, size_index, &n);
       if (b)
-	{
-	  B_list::remove(b);
-	  _free_map.clear_bit((reinterpret_cast<unsigned long>(b) - _base)
-	                      / Min_size);
-	  block = n;
-	  ++size_index;
-	}
+        {
+          B_list::remove(b);
+          _free_map.clear_bit((reinterpret_cast<unsigned long>(b) - _base)
+                              / Min_size);
+          block = n;
+          ++size_index;
+        }
       else
 	break;
     }
@@ -191,14 +213,20 @@ void
 Buddy_t_base<A,B>::add_mem(void *b, unsigned long size)
 {
   unsigned long start = reinterpret_cast<unsigned long>(b);
-  unsigned long al_start;
-  al_start = (start + Min_size - 1) & ~(Min_size - 1);
+  assert (start >= _base);
 
-  if (size <= al_start - start)
+  // Blocks must be Min_size-aligned relative to '_base' (not in absolute
+  // terms, Min_size may not be a power of two). Round start up accordingly
+  // and round the size down to a multiple of Min_size.
+  unsigned long rem = (start - _base) % Min_size;
+  unsigned long pad = rem ? Min_size - rem : 0;
+
+  if (size <= pad)
     return;
 
-  size -= al_start - start;
-  size &= ~(Min_size - 1);
+  unsigned long al_start = start + pad;
+  size -= pad;
+  size -= size % Min_size;
 
   while (size)
     {
@@ -243,13 +271,13 @@ Buddy_t_base<A,B>::alloc(unsigned long size)
     {
       Head *f = _free[i].front();
       if (f)
-	{
-	  B_list::remove(f);
-	  split(f, size_index, i);
-	  _free_map.clear_bit((reinterpret_cast<unsigned long>(f) - _base)
-                        / Min_size);
-	  return f;
-	}
+        {
+          B_list::remove(f);
+          split(f, size_index, i);
+          _free_map.clear_bit((reinterpret_cast<unsigned long>(f) - _base)
+                            / Min_size);
+          return f;
+        }
     }
   return nullptr;
 }
@@ -292,38 +320,53 @@ Buddy_t_base<A,B>::dump() const
       printf("(%lu)", valid ? h->index : 0UL);
     };
 
+  auto size_str = [](unsigned long sz, char *buf)
+    {
+      static char const *units[] =
+        { "B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB" }; // 2^64 == 16 EiB
+
+      unsigned u = 0;
+      while (u < 6 && (sz >> (10 * (u + 1))) != 0)
+        ++u;
+
+      unsigned shift = 10 * u;
+      unsigned rem = sz & ((1U << shift) - 1);
+      unsigned whole = sz >> shift;
+
+      if (u == 0)
+        snprintf(buf, 16, "%u %3s", whole, units[0]);
+      else
+        snprintf(buf, 16, "%u.%hu %3s", whole, (rem * 10) >> shift, units[u]);
+      return buf;
+    };
+
+  static char buf[16];
+
   unsigned long total = 0;
   printf("Buddy_alloc [%ld,%ld]\n", Min_size, Num_sizes);
-  for (unsigned i = 0, shift = 10, unit = 0; i < Num_sizes; ++i)
+  for (unsigned i = 0; i < Num_sizes; ++i)
     {
       unsigned long c = 0;
       unsigned long avail = 0;
       B_list::Const_iterator h = _free[i].begin();
-      static_assert(Min_size >= 1024); // 2^64 == 16 EiB
-      printf("  [%3lu %ciB] ", Min_size >> shift, "KMGTPE"[unit]);
+      printf("  [%10s] ", size_str(Min_size << i, buf));
       print_freelist_entry(h, h != _free[i].end());
+      unsigned const elide_after = 8;
       while (h != _free[i].end())
         {
           ++h;
-          if (c <= 5)
-            printf("\n%15s", c < 5 ? "-> " : "...");
-          if (c < 5)
+          if (c <= elide_after)
+            printf("\n%15s", c < elide_after ? "-> " : "...");
+          if (c < elide_after)
             print_freelist_entry(h, !!*h);
 
           avail += Min_size << i;
           ++c;
         }
-      printf(" == %lu KiB (%lu bytes)\n", avail / 1024, avail);
+      printf(" == %s (%lu bytes)\n", size_str(avail, buf), avail);
       total += avail;
-
-      // Avoid evaluation of (i % 10) and (i / 10) to prevent the compiler
-      // generating external references to __aeabi_idivmod.
-      if (--shift == 0)
-        {
-          ++unit;
-          shift = 10;
-        }
     }
 
-  printf("sum of available memory: %lu KiB (%lu bytes)\n", total / 1024, total);
+  printf("sum of available memory: %s (%lu bytes)\n",
+         size_str(total, buf), total);
 }
