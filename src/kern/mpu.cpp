@@ -2,7 +2,6 @@ INTERFACE [mpu]:
 
 #include <cxx/avl_tree>
 
-#include "bitmap.h"
 #include "l4_fpage.h"
 #include "l4_msg_item.h"
 #include "mem_layout.h"
@@ -145,17 +144,32 @@ private:
   static void direct_write(unsigned slot, Mpu_region_base const &r, bool inplace);
 };
 
+//---------------------------------------------------------------------------
+INTERFACE [mpu && !mpultiplex]:
+
+#include "bitmap.h"
+
+using Bitmap_type = Bitmap<Mem_layout::Mpu_regions>;
+
+//---------------------------------------------------------------------------
+INTERFACE [mpu && mpultiplex]:
+
+#include "dynamic_bitmap.h"
+
+using Bitmap_type =
+  Dynamic_bitmap<Config::Mpultiplex_block_size, Mpu::Dynamic_bitmap_allocator>;
+
+//---------------------------------------------------------------------------
+INTERFACE [mpu]:
+
 /**
  * Bit mask of MPU regions.
  */
-class Mpu_regions_mask : public Bitmap<Mem_layout::Mpu_regions>
+class Mpu_regions_mask : public Bitmap_type
 {
 public:
-  Mpu_regions_mask()
-  { clear_all(); }
-
   // Required to make it compatible with Mpu_regions_update::Updates
-  using Bitmap<Mem_layout::Mpu_regions>::operator=;
+  using Bitmap_type::operator=;
 };
 
 /**
@@ -181,19 +195,6 @@ public:
     Error_collision = 1 << 1, //< New region collides with existing, incompatible one.
   };
 
-  Mpu_regions_update()
-  : Mpu_regions_mask()
-  {}
-
-  /**
-   * Construct an error "update".
-   */
-  explicit Mpu_regions_update(Error error)
-  : Mpu_regions_mask()
-  {
-    _error_state |= error;
-  }
-
   Mpu_regions_update(Mpu_regions_update const &) = default;
   Mpu_regions_update &operator=(Mpu_regions_update const &) = default;
 
@@ -213,7 +214,7 @@ public:
   Mpu_regions_update &operator|=(Mpu_regions_update const &other) &
   {
     _error_state |= other._error_state;
-    this->Bitmap::operator|=(other);
+    this->Bitmap_type::operator|=(other);
     return *this;
   }
 
@@ -244,6 +245,43 @@ public:
     return lsb_set < 0 ? Error_no_err : static_cast<Error>(1 << lsb_set);
   }
 };
+
+//---------------------------------------------------------------------------
+INTERFACE [mpu && !mpultiplex]:
+
+/*
+ * The size parameters exist for compatibility with MPUltiplex. Without it,
+ * masks always cover `Mem_layout::Mpu_regions`.
+ */
+EXTENSION class Mpu_regions_mask
+{
+public:
+  explicit Mpu_regions_mask(unsigned = Mem_layout::Mpu_regions)
+  { clear_all(); }
+};
+
+EXTENSION class Mpu_regions_update
+{
+public:
+  explicit Mpu_regions_update(unsigned size = Mem_layout::Mpu_regions)
+  : Mpu_regions_mask(size)
+  {}
+
+  explicit Mpu_regions_update(Error error,
+                              unsigned size = Mem_layout::Mpu_regions)
+  : Mpu_regions_mask(size)
+  { _error_state |= error; }
+};
+
+EXTENSION class Mpu
+{
+public:
+  /// Nothing to allocate without multiplexing.
+  static void init_alloc() {}
+};
+
+//---------------------------------------------------------------------------
+INTERFACE [mpu]:
 
 /**
  * List of MPU regions.
@@ -446,7 +484,7 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
         return Mpu_regions_update(Mpu_regions_update::Error_collision);
     }
 
-  Mpu_regions_update updates;
+  Mpu_regions_update updates(size());
   Mpu_region *r = nullptr;
 
   /*
@@ -516,7 +554,7 @@ PUBLIC inline NEEDS[Mpu_regions::find_free]
 Mpu_regions_update
 Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
 {
-  Mpu_regions_update updates;
+  Mpu_regions_update updates(size());
 
   // Find the first region that ends at or after `start`.
   Mpu_region *i = _used_tree.last_less_equal_node(start);
@@ -685,13 +723,13 @@ Mpu_regions::extend(Mpu_region *first, Mpu_region_attr attr, Mword start,
       if (end < i->start())
         break;
       else if (i->attr() != attr)
-        return Mpu_regions_update(Mpu_regions_update::Error_collision);
+        return Mpu_regions_update(Mpu_regions_update::Error_collision, size());
     }
 
   // The remainder of the function always works on the first overlapping
   // region. We know that all overlapping regions can be coalesced. So once the
   // current region covers [start,end] we're done.
-  Mpu_regions_update updates;
+  Mpu_regions_update updates(size());
   updates.set_updated(index(first));
 
   // Extend to the left? Will possibly merge with compatible adjacent region.
