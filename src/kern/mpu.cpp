@@ -2,7 +2,6 @@ INTERFACE [mpu]:
 
 #include <cxx/avl_tree>
 
-#include "bitmap.h"
 #include "l4_fpage.h"
 #include "l4_msg_item.h"
 #include "mem_layout.h"
@@ -132,17 +131,32 @@ public:
   static unsigned regions();
 };
 
+//---------------------------------------------------------------------------
+INTERFACE [mpu && !mpultiplex]:
+
+#include "bitmap.h"
+
+using Bitmap_type = Bitmap<Mem_layout::Mpu_regions>
+
+//---------------------------------------------------------------------------
+INTERFACE [mpu && mpultiplex]:
+
+#include "dynamic_bitmap.h"
+
+using Bitmap_type =
+  Dynamic_bitmap<Config::Mpultiplex_block_size, Mpu::Dynamic_bitmap_allocator>;
+
+//---------------------------------------------------------------------------
+INTERFACE [mpu]:
+
 /**
  * Bit mask of MPU regions.
  */
-class Mpu_regions_mask : public Bitmap<Mem_layout::Mpu_regions>
+class Mpu_regions_mask : public Bitmap_type
 {
 public:
-  Mpu_regions_mask()
-  { clear_all(); }
-
   // Required to make it compatible with Mpu_regions_update::Updates
-  using Bitmap<Mem_layout::Mpu_regions>::operator=;
+  using Bitmap_type::operator=;
 };
 
 /**
@@ -168,19 +182,6 @@ public:
     Error_collision = 1 << 1, //< New region collides with existing, incompatible one.
   };
 
-  Mpu_regions_update()
-  : Mpu_regions_mask()
-  {}
-
-  /**
-   * Construct an error "update".
-   */
-  explicit Mpu_regions_update(Error error)
-  : Mpu_regions_mask()
-  {
-    _error_state |= error;
-  }
-
   Mpu_regions_update(Mpu_regions_update const &) = default;
   Mpu_regions_update &operator=(Mpu_regions_update const &) = default;
 
@@ -200,7 +201,7 @@ public:
   Mpu_regions_update &operator|=(Mpu_regions_update const &other) &
   {
     _error_state |= other._error_state;
-    this->Bitmap::operator|=(other);
+    this->Bitmap_type::operator|=(other);
     return *this;
   }
 
@@ -231,6 +232,55 @@ public:
     return lsb_set < 0 ? Error_no_err : static_cast<Error>(1 << lsb_set);
   }
 };
+
+//---------------------------------------------------------------------------
+INTERFACE [mpu && !mpultiplex]:
+
+EXTENSION class Mpu_regions_mask
+{
+public:
+  explicit Mpu_regions_mask()
+  { clear_all(); }
+};
+
+EXTENSION class Mpu_regions_update
+{
+public:
+  explicit Mpu_regions_update()
+  : Mpu_regions_mask()
+  {}
+
+  explicit Mpu_regions_update(Error error)
+  : Mpu_regions_mask()
+  { _error_state |= error; }
+};
+
+
+//---------------------------------------------------------------------------
+INTERFACE [mpu && mpultiplex]:
+
+EXTENSION class Mpu_regions_mask
+{
+public:
+  explicit Mpu_regions_mask(unsigned size = Mpu::regions())
+  : Bitmap_type(size)
+  { clear_all(); }
+};
+
+EXTENSION class Mpu_regions_update
+{
+public:
+  explicit Mpu_regions_update(unsigned size = Mpu::regions())
+  : Mpu_regions_mask(size)
+  {}
+
+  explicit Mpu_regions_update(Error error, unsigned size = Mpu::regions())
+  : Mpu_regions_mask(size)
+  { _error_state |= error; }
+};
+
+//---------------------------------------------------------------------------
+INTERFACE [mpu]:
 
 /**
  * List of MPU regions.
@@ -372,6 +422,104 @@ private:
 };
 
 //---------------------------------------------------------------------------
+INTERFACE [mpu && mpultiplex]:
+
+#include "buddy_alloc.h"
+
+EXTENSION class Mpu
+{
+public:
+  /**
+   * Initialize allocation functionality used by MPU code.
+   */
+  static void init_alloc();
+
+  using Buddy_bitmap_alloc
+    = Buddy_t_base<max(2 * Config::Mpultiplex_block_size / 8, 24U), 2>;
+  class Dynamic_bitmap_allocator : public Buddy_bitmap_alloc
+  {
+  public:
+    void *alloc(unsigned long size)
+    { return Mpu::bitmap_allocator()->alloc(size); }
+    void free(void *block, unsigned long size)
+    { Mpu::bitmap_allocator()->free(block, size); }
+  };
+
+private:
+  // ALLOCATOR STUFF
+  static void *request_kmem(size_t size);
+
+  enum Initial_alloc_sizes : size_t {
+    Bitmap = Buddy_bitmap_alloc::Max_size * 64,
+  };
+
+  static constexpr unsigned FREEMAP_STORAGE_ELEMENTS = 16;
+  using Freemap_storage = unsigned long[FREEMAP_STORAGE_ELEMENTS];
+  static Global_data<Freemap_storage> _freemap_storage;
+
+  template<class A>
+  static void
+  setup_allocator(A *alloc, size_t initial_size, unsigned *freemap_storage_pos)
+  {
+    void *initial_mem = request_kmem(initial_size);
+
+    auto   min_addr = reinterpret_cast<Address>(initial_mem);
+    size_t max_addr = min_addr + initial_size - 1;
+    auto   freemap_size = A::free_map_bytes(min_addr, max_addr);
+
+    unsigned long *freemap_mem = &_freemap_storage[*freemap_storage_pos];
+    *freemap_storage_pos += freemap_size / sizeof(unsigned long) + 1;
+
+    alloc->init(min_addr);
+    alloc->setup_free_map(freemap_mem, freemap_size);
+    alloc->add_mem(initial_mem, initial_size);
+  }
+};
+
+//---------------------------------------------------------------------------
+IMPLEMENTATION [mpu && mpultiplex]:
+
+#include "kmem_alloc.h"
+#include "ram_quota.h"
+
+static DEFINE_GLOBAL_PRIO(EARLY_INIT_PRIO)
+  Global_data<Mpu::Buddy_bitmap_alloc> _bitmap_alloc;
+
+DEFINE_GLOBAL Global_data<Mpu::Freemap_storage> Mpu::_freemap_storage;
+
+PRIVATE static
+Mpu::Buddy_bitmap_alloc *
+Mpu::bitmap_allocator()
+{ return &_bitmap_alloc; }
+
+IMPLEMENT static inline NEEDS["kmem_alloc.h", "ram_quota.h"]
+void *
+Mpu::request_kmem(size_t size)
+{
+  auto const& q = Ram_quota::root.unwrap();
+  void *mem = Kmem_alloc::allocator()->q_alloc(q, Bytes(size));
+  assert(mem);
+  return mem;
+}
+
+IMPLEMENT static
+void
+Mpu::init_alloc()
+{
+  unsigned fm_index = 0;
+  setup_allocator(&_bitmap_alloc, Initial_alloc_sizes::Bitmap, &fm_index);
+
+  // Increase FREEMAP_STORAGE_ELEMENTS if this is hit.
+  assert(sizeof(unsigned long) * fm_index < sizeof(_freemap_storage));
+  printf("MPU: used %zu bytes of freemap storage (of %zu allocated bytes)\n",
+         sizeof(unsigned long) * fm_index, sizeof(_freemap_storage));
+
+  _bitmap_alloc->dump();
+
+  printf("MPU: %i regions in Hardware\n", Mpu::regions());
+}
+
+//---------------------------------------------------------------------------
 IMPLEMENTATION [mpu]:
 
 /**
@@ -415,7 +563,7 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
         return Mpu_regions_update(Mpu_regions_update::Error_collision);
     }
 
-  Mpu_regions_update updates;
+  Mpu_regions_update updates(size());
   Mpu_region *r = nullptr;
 
   /*
@@ -485,7 +633,7 @@ PUBLIC inline NEEDS[Mpu_regions::find_free]
 Mpu_regions_update
 Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
 {
-  Mpu_regions_update updates;
+  Mpu_regions_update updates(size());
 
   Mpu_region *i = front();
 
@@ -654,13 +802,13 @@ Mpu_regions::extend(Mpu_region *first, Mpu_region_attr attr, Mword start,
       if (end < i->start())
         break;
       else if (i->attr() != attr)
-        return Mpu_regions_update(Mpu_regions_update::Error_collision);
+        return Mpu_regions_update(Mpu_regions_update::Error_collision, size());
     }
 
   // The remainder of the function always works on the first overlapping
   // region. We know that all overlapping regions can be coalesced. So once the
   // current region covers [start,end] we're done.
-  Mpu_regions_update updates;
+  Mpu_regions_update updates(size());
   updates.set_updated(index(first));
 
   // Extend to the left? Will possibly merge with compatible adjacent region.
