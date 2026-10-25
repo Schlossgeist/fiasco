@@ -280,7 +280,7 @@ void Mpu::init()
 //------------------------------------------------------------------
 INTERFACE [arm && 32bit && mpu && arm_v8]:
 
-EXTENSION struct Mpu_region
+EXTENSION struct Mpu_region_base
 {
 public:
   Mword prbar, prlar;

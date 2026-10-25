@@ -233,7 +233,7 @@ INTERFACE [arm && 64bit && mpu && arm_v8]:
 
 #include "cpu_lock.h"
 
-EXTENSION struct Mpu_region
+EXTENSION struct Mpu_region_base
 {
 public:
   Mword prbar, prlar;
