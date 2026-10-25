@@ -197,10 +197,10 @@ public:
  * architecture extends the struct with the actual data for the hardware. All
  * addresses are inclusive!
  */
-struct Mpu_region : public cxx::D_list_item
+struct Mpu_region_base : public cxx::D_list_item
 {
-  constexpr Mpu_region();
-  Mpu_region(Mword start, Mword end, Mpu_region_attr a);
+  constexpr Mpu_region_base();
+  Mpu_region_base(Mword start, Mword end, Mpu_region_attr a);
 
   constexpr Mword start() const;
   constexpr Mword end() const;
@@ -211,7 +211,7 @@ struct Mpu_region : public cxx::D_list_item
   inline void attr(Mpu_region_attr attr);
   inline void disable();
 
-  friend bool operator < (Mpu_region const &lhs, Mpu_region const &rhs)
+  friend bool operator < (Mpu_region_base const &lhs, Mpu_region_base const &rhs)
   { return lhs.end() < rhs.start(); }
 
   constexpr bool contains(Mword addr) const
@@ -231,7 +231,7 @@ struct Mpu_region : public cxx::D_list_item
  */
 class Mpu_regions
 {
-  typedef cxx::D_list<Mpu_region> Region_list;
+  typedef cxx::D_list<Mpu_region_base> Region_list;
 
 public:
   /**
@@ -259,51 +259,51 @@ public:
   : _size(other._size), _reserved(other._reserved)
   {
     _reserved |= other._used_mask;
-    for (Mpu_region *i : other._used_list)
+    for (Mpu_region_base *i : other._used_list)
       {
         unsigned idx = other.index(i);
-        Mpu_region *r = &(*this)[idx];
+        Mpu_region_base *r = &(*this)[idx];
         r->start(i->start());
         r->end(i->end());
         r->attr(i->attr());
       }
   }
 
-  Mpu_region const &operator[](unsigned i) const &
+  Mpu_region_base const &operator[](unsigned i) const &
   { return _regions[i]; }
-  Mpu_region const &operator[](unsigned i) const && = delete;
+  Mpu_region_base const &operator[](unsigned i) const && = delete;
 
   Mpu_regions_mask used()     const { return _used_mask; }
   Mpu_regions_mask reserved() const { return _reserved; }
   unsigned         size()     const { return _size; }
 
 private:
-  Mpu_region &operator[](unsigned i) &
+  Mpu_region_base &operator[](unsigned i) &
   { return _regions[i]; }
-  Mpu_region &operator[](unsigned i) && = delete;
+  Mpu_region_base &operator[](unsigned i) && = delete;
 
-  unsigned index(Mpu_region const *r) const
+  unsigned index(Mpu_region_base const *r) const
   { return r - _regions; }
 
-  Mpu_region *deref_iter(Region_list::Iterator iter) const
+  Mpu_region_base *deref_iter(Region_list::Iterator iter) const
   { return iter != _used_list.end() ? *iter : nullptr; }
 
-  Mpu_region *front() const
+  Mpu_region_base *front() const
   { return deref_iter(_used_list.begin()); }
 
-  Mpu_region *next(Mpu_region *r) const
+  Mpu_region_base *next(Mpu_region_base *r) const
   {
     auto iter = _used_list.iter(r);
     return deref_iter(++iter);
   }
 
-  Mpu_region *prev(Mpu_region *r) const
+  Mpu_region_base *prev(Mpu_region_base *r) const
   {
     auto iter = _used_list.iter(r);
     return iter != _used_list.begin() ? *(--iter) : nullptr;
   }
 
-  Mpu_region *erase(Mpu_region *r)
+  Mpu_region_base *erase(Mpu_region_base *r)
   {
     _used_mask.clear_bit(index(r));
     r->disable();
@@ -312,7 +312,7 @@ private:
 
   enum Insert { After, Before, Back };
 
-  void insert(Mpu_region *r, Insert mode, Mpu_region *pos)
+  void insert(Mpu_region_base *r, Insert mode, Mpu_region_base *pos)
   {
     _used_mask.set_bit(index(r));
     if (mode == After)
@@ -327,7 +327,7 @@ private:
   Mpu_regions_mask _reserved;
   Mpu_regions_mask _used_mask;  ///< Bit mask of occupied regions
   Region_list _used_list;       ///< Sorted list (by address) of used regions
-  Mpu_region _regions[Mem_layout::Mpu_regions];
+  Mpu_region_base _regions[Mem_layout::Mpu_regions];
 };
 
 //---------------------------------------------------------------------------
@@ -357,9 +357,9 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
 {
   // Find existing regions left and right of the new region. In case of a
   // collision the existing regions need to be extended and optimized.
-  Mpu_region *left = nullptr;
-  Mpu_region *right = nullptr;
-  for (Mpu_region *i : _used_list)
+  Mpu_region_base *left = nullptr;
+  Mpu_region_base *right = nullptr;
+  for (Mpu_region_base *i : _used_list)
     {
       if (i->end() < start)
         left = i;
@@ -375,7 +375,7 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
     }
 
   Mpu_regions_update updates;
-  Mpu_region *r = nullptr;
+  Mpu_region_base *r = nullptr;
 
   /*
    * Possibly join with left region. Can be safely extended if attributes
@@ -454,7 +454,7 @@ Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
 {
   Mpu_regions_update updates;
 
-  Mpu_region *i = front();
+  Mpu_region_base *i = front();
 
   while (i && i->end() < start)
     i = next(i);
@@ -473,7 +473,7 @@ Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
       else if (i->start() < start && i->end() > end)
         {
           // unmap range falls inside of region -> try to split
-          Mpu_region *r = find_free();
+          Mpu_region_base *r = find_free();
           if (r)
             {
               updates.set_updated(index(r));
@@ -521,7 +521,7 @@ Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
  * \return nullptr if no region was found, otherwise the pointer to the region.
  */
 PUBLIC inline
-Mpu_region const *
+Mpu_region_base const *
 Mpu_regions::find(Mword addr) const
 {
   for (auto const &i : _used_list)
@@ -539,7 +539,7 @@ Mpu_regions::find(Mword addr) const
 }
 
 PUBLIC inline
-Mpu_region const *
+Mpu_region_base const *
 Mpu_regions::find_next(Mword addr) const
 {
   for (auto const &i : _used_list)
@@ -590,7 +590,7 @@ Mpu_regions::dump() const
  * \return Pointer to free region, nullptr otherwise.
  */
 PRIVATE inline
-Mpu_region*
+Mpu_region_base *
 Mpu_regions::find_free(int slot = -1)
 {
   if (slot < 0)
@@ -623,7 +623,7 @@ Mpu_regions::find_free(int slot = -1)
  */
 PRIVATE inline
 Mpu_regions_update
-Mpu_regions::extend(Mpu_region *first, Mpu_region_attr attr, Mword start,
+Mpu_regions::extend(Mpu_region_base *first, Mpu_region_attr attr, Mword start,
                     Mword end)
 {
   // Make sure all regions that overlap have compatible attributes. Only then
@@ -651,7 +651,7 @@ Mpu_regions::extend(Mpu_region *first, Mpu_region_attr attr, Mword start,
   // overlapping region.
   if (first->start() > start)
     {
-      Mpu_region *left = prev(first);
+      Mpu_region_base *left = prev(first);
       if (left && left->end() + 1U >= start && left->attr() == attr)
         {
           first->start(left->start());
@@ -668,7 +668,7 @@ Mpu_regions::extend(Mpu_region *first, Mpu_region_attr attr, Mword start,
   // be covered.
   while (first->end() < end)
     {
-      Mpu_region *right = next(first);
+      Mpu_region_base *right = next(first);
       if (right && right->start() <= end + 1U && right->attr() == attr)
         {
           first->end(right->end());
