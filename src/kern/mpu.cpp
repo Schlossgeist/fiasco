@@ -93,6 +93,8 @@ struct Mpu_region
   { return r->start(); }
 };
 
+using Mpu_region_block = Mpu_region[Config::Mpultiplex_block_size];
+
 /**
  * Interface to the CPUs MPU.
  */
@@ -298,41 +300,6 @@ class Mpu_regions
   using Region_tree = cxx::Avl_tree<Mpu_region, Mpu_region>;
 
 public:
-  /**
-   * Construct new MPU region list.
-   *
-   * \param reserved  Map of regions that are not allocatable.
-   */
-  explicit Mpu_regions(Mpu_regions_mask const &reserved)
-  : _size(Mpu::regions()), _reserved(reserved)
-  {
-    if (_size > Mem_layout::Mpu_regions)
-      _size = Mem_layout::Mpu_regions;
-  }
-
-  enum class Init { Reserved_regions };
-
-  /**
-   * Construct new MPU region list.
-   *
-   * This is *not* a copy constructor! The other Mpu_regions object that is
-   * passed will be used as a reserved-regions template. To enable fast
-   * context switches, the used regions of the other object are still copied.
-   */
-  explicit Mpu_regions(Mpu_regions const &other, Init)
-  : _size(other._size), _reserved(other._reserved)
-  {
-    _reserved |= other._used_mask;
-    for (Mpu_region const &i : other._used_tree)
-      {
-        unsigned idx = other.index(&i);
-        Mpu_region &r = (*this)[idx];
-        r.start(i.start());
-        r.end(i.end());
-        r.attr(i.attr());
-      }
-  }
-
   Mpu_region const &operator[](unsigned i) const &
   { return _regions[i]; }
   Mpu_region const &operator[](unsigned i) const && = delete;
@@ -418,7 +385,6 @@ private:
   Mpu_regions_mask _reserved;
   Mpu_regions_mask _used_mask;  ///< Bit mask of occupied regions
   Region_tree _used_tree;       ///< Sorted tree (by address) of used regions
-  Mpu_region _regions[Mem_layout::Mpu_regions];
 };
 
 //---------------------------------------------------------------------------
@@ -433,6 +399,19 @@ public:
    * Initialize allocation functionality used by MPU code.
    */
   static void init_alloc();
+
+  using Buddy_block_alloc 
+    = Buddy_t_base<2 * sizeof(Mpu_region_block), 4>;
+  class Block_allocator : public Buddy_block_alloc
+  {
+  public:
+    void *alloc(unsigned long size)
+    { return Mpu::block_allocator()->alloc(size); }
+    void free(void *block, unsigned long size)
+    { Mpu::block_allocator()->free(block, size); }
+    void dump() const
+    { Mpu::block_allocator()->dump(); }
+  };
 
   using Buddy_bitmap_alloc
     = Buddy_t_base<max(2 * Config::Mpultiplex_block_size / 8, 24U), 2>;
@@ -450,6 +429,7 @@ private:
   static void *request_kmem(size_t size);
 
   enum Initial_alloc_sizes : size_t {
+    Block  = Buddy_block_alloc::Min_size * 32,
     Bitmap = Buddy_bitmap_alloc::Max_size * 64,
   };
 
@@ -476,6 +456,174 @@ private:
   }
 };
 
+#include "arithmetic.h"
+
+EXTENSION class Mpu_regions
+{
+public:
+  /**
+   * Construct new MPU region list.
+   *
+   * \param reserved  Map of regions that are not allocatable.
+   */
+  explicit Mpu_regions(Mpu_regions_mask const &reserved)
+  : _size(Config::Mpultiplex_block_size), _reserved(reserved),
+    _regions(_static_regions)
+  {}
+
+  enum class Init { Reserved_regions };
+
+  /**
+   * Construct new MPU region list.
+   *
+   * This is *not* a copy constructor! The other Mpu_regions object that is
+   * passed will be used as a reserved-regions template. To enable fast
+   * context switches, the used regions of the other object are still copied.
+   */
+  explicit Mpu_regions(Mpu_regions const &other, Init)
+  : _size(other._size), _reserved(other._reserved),
+    _regions(_static_regions)
+  {
+    _reserved |= other._used_mask;
+    for (Mpu_region const &i : other._used_tree)
+      {
+        unsigned idx = other.index(&i);
+        Mpu_region &r = (*this)[idx];
+        r.start(i.start());
+        r.end(i.end());
+        r.attr(i.attr());
+      }
+  }
+
+private:
+  static constexpr unsigned regions_per_block()
+  { return Config::Mpultiplex_block_size; }
+
+  static unsigned blocks_needed_for_nr_regions(unsigned nr_regions)
+  { return cxx::div_ceil(nr_regions, regions_per_block()); }
+
+  /**
+   * Reserves space to be able to store more regions.
+   *
+   * \param new_size  The amount to reserve space for.
+   *
+   * \return The amount that space has actually been reserved for.
+   *         May be larger than what was requested.
+   */
+  size_t reserve(size_t new_size)
+  {
+    if (new_size <= size())
+      {
+        WARNX(Info, "Tried to reserve no additional space for this "
+                    "Mpu_region_block_storage object!");
+        return size();
+      }
+
+    // calculate how many new new blocks to allocate
+    unsigned size_diff = new_size - size();
+    unsigned nr_blocks_needed = cxx::div_ceil(size_diff, regions_per_block());
+    unsigned current_nr_blocks = size() / regions_per_block();
+
+    auto new_regions = static_cast<Mpu_region *>(_allocator.alloc(
+        sizeof(Mpu_region_block) * (nr_blocks_needed + current_nr_blocks)
+    ));
+    assert(new_regions);
+
+    for (unsigned i = 0; i < size(); ++i)
+      {
+        Mpu_region const& r = _regions[i];
+        new (&new_regions[i]) Mpu_region(r.start(), r.end(), r.attr());
+      }
+
+    // Free the old blocks or clear the no-longer-used _static_regions.
+    if (size() > regions_per_block())
+      _allocator.free(_regions, sizeof(Mpu_region_block) * current_nr_blocks);
+    else
+      new (_regions) Mpu_region_block();
+
+    _regions = new_regions;
+    _size += nr_blocks_needed * regions_per_block();
+
+    return size();
+  }
+
+  size_t grow()
+  {
+    size_t new_size = size() * 2;
+    // Reserving may invalidate avl tree pointers. Disconnect them
+    // before and reconstruct the tree afterwards.
+    _used_tree.remove_all([](Mpu_region *){});
+    reserve(new_size);
+
+    // Reconstruct tree at new location
+    for (unsigned i = 0; i < _used_mask.size(); ++i)
+      {
+        if (_used_mask[i])
+          _used_tree.insert(&(*this)[i]);
+      }
+
+    // Also grow masks to new size.
+    _reserved.resize(new_size);
+    _used_mask.resize(new_size);
+
+    printf("[%p] Mpu_regions size extended to %zu\n", this, new_size);
+
+    return new_size;
+  }
+
+protected:
+  Mpu::Block_allocator _allocator;
+
+private:
+  Mpu_region_block _static_regions;
+  Mpu_region *_regions;
+};
+
+//---------------------------------------------------------------------------
+INTERFACE [mpu && !mpultiplex]:
+
+EXTENSION class Mpu_regions
+{
+public:
+  /**
+   * Construct new MPU region list.
+   *
+   * \param reserved  Map of regions that are not allocatable.
+   */
+  explicit Mpu_regions(Mpu_regions_mask const &reserved)
+  : _size(Mpu::regions()), _reserved(reserved)
+  {
+    if (_size > Mem_layout::Mpu_regions)
+      _size = Mem_layout::Mpu_regions;
+  }
+
+  enum class Init { Reserved_regions };
+
+  /**
+   * Construct new MPU region list.
+   *
+   * This is *not* a copy constructor! The other Mpu_regions object that is
+   * passed will be used as a reserved-regions template. To enable fast
+   * context switches, the used regions of the other object are still copied.
+   */
+  explicit Mpu_regions(Mpu_regions const &other, Init)
+  : _size(other._size), _reserved(other._reserved)
+  {
+    _reserved |= other._used_mask;
+    for (Mpu_region const &i : other._used_tree)
+      {
+        unsigned idx = other.index(&i);
+        Mpu_region &r = (*this)[idx];
+        r.start(i.start());
+        r.end(i.end());
+        r.attr(i.attr());
+      }
+  }
+
+private:
+  Mpu_region _regions[Mem_layout::Mpu_regions];
+};
+
 //---------------------------------------------------------------------------
 IMPLEMENTATION [mpu && mpultiplex]:
 
@@ -483,9 +631,16 @@ IMPLEMENTATION [mpu && mpultiplex]:
 #include "ram_quota.h"
 
 static DEFINE_GLOBAL_PRIO(EARLY_INIT_PRIO)
+  Global_data<Mpu::Buddy_block_alloc> _block_alloc;
+static DEFINE_GLOBAL_PRIO(EARLY_INIT_PRIO)
   Global_data<Mpu::Buddy_bitmap_alloc> _bitmap_alloc;
 
 DEFINE_GLOBAL Global_data<Mpu::Freemap_storage> Mpu::_freemap_storage;
+
+PRIVATE static
+Mpu::Buddy_block_alloc *
+Mpu::block_allocator()
+{ return &_block_alloc; }
 
 PRIVATE static
 Mpu::Buddy_bitmap_alloc *
@@ -507,6 +662,7 @@ void
 Mpu::init_alloc()
 {
   unsigned fm_index = 0;
+  setup_allocator(&_block_alloc,  Initial_alloc_sizes::Block, &fm_index);
   setup_allocator(&_bitmap_alloc, Initial_alloc_sizes::Bitmap, &fm_index);
 
   // Increase FREEMAP_STORAGE_ELEMENTS if this is hit.
@@ -514,6 +670,7 @@ Mpu::init_alloc()
   printf("MPU: used %zu bytes of freemap storage (of %zu allocated bytes)\n",
          sizeof(unsigned long) * fm_index, sizeof(_freemap_storage));
 
+  _block_alloc->dump();
   _bitmap_alloc->dump();
 
   printf("MPU: %i regions in Hardware\n", Mpu::regions());
@@ -605,7 +762,14 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
   // Could not join an existing region. We need to allocate a new slot.
   r = find_free(slot);
   if (!r)
-    return Mpu_regions_update(Mpu_regions_update::Error_no_mem);
+    {
+      size_t new_size = grow();
+      r = find_free(slot);
+      assert(r);
+
+      Mpu_regions_update m(new_size);
+      updates |= m;
+    }
 
   // No reinsertion needed, because 'r' was free, therefore unused.
   modify<Full>(r, start, end, attr);
@@ -668,11 +832,12 @@ Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
             }
           else
             {
-              // no further regions available -> delete whole region
-              WARN("Dropped whole region [" L4_MWORD_FMT ":" L4_MWORD_FMT
-                   "] while deleting  [" L4_MWORD_FMT ":" L4_MWORD_FMT "]\n",
-                   i->start(), i->end(), start, end);
-              erase(i);
+              size_t new_size = grow();
+              r = find_free();
+              assert(r);
+
+              Mpu_regions_update m(new_size);
+              updates |= m;
             }
           break;
         }
