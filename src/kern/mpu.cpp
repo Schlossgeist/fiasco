@@ -93,6 +93,30 @@ struct Mpu_region
   { return r->start(); }
 };
 
+//---------------------------------------------------------------------------
+INTERFACE [mpu && mpultiplex]:
+
+EXTENSION struct Mpu_region
+{
+private:
+  friend class Mpu_regions;
+
+  /**
+   * Logical index in the owning `Mpu_regions`, see `Mpu_regions::index()`.
+   * Fills the tail padding of the AVL tree node.
+   */
+  unsigned short _index = 0;
+};
+
+static_assert(sizeof(Mpu_region) == sizeof(Mpu_region_base)
+                                    + sizeof(cxx::Avl_tree_node),
+              "Mpu_region: _index should not increase its size");
+
+using Mpu_region_block = Mpu_region[Config::Mpultiplex_block_size];
+
+//---------------------------------------------------------------------------
+INTERFACE [mpu]:
+
 /**
  * Interface to the CPUs MPU.
  */
@@ -299,40 +323,8 @@ class Mpu_regions
   using Region_tree = cxx::Avl_tree<Mpu_region, Mpu_region>;
 
 public:
-  /**
-   * Construct new MPU region list.
-   *
-   * \param reserved  Map of regions that are not allocatable.
-   */
-  explicit Mpu_regions(Mpu_regions_mask const &reserved)
-  : _size(Mpu::regions()), _reserved(reserved)
-  {}
-
-  enum class Init { Reserved_regions };
-
-  /**
-   * Construct new MPU region list.
-   *
-   * This is *not* a copy constructor! The other Mpu_regions object that is
-   * passed will be used as a reserved-regions template. To enable fast
-   * context switches, the used regions of the other object are still copied.
-   */
-  explicit Mpu_regions(Mpu_regions const &other, Init)
-  : _size(other._size), _reserved(other._reserved)
-  {
-    _reserved |= other._used_mask;
-    for (Mpu_region const &i : other._used_tree)
-      {
-        unsigned idx = other.index(&i);
-        Mpu_region &r = (*this)[idx];
-        r.start(i.start());
-        r.end(i.end());
-        r.attr(i.attr());
-      }
-  }
-
   Mpu_region const &operator[](unsigned i) const &
-  { return _regions[i]; }
+  { return region(i); }
   Mpu_region const &operator[](unsigned i) const && = delete;
 
   Mpu_regions_mask const &used()     const { return _used_mask; }
@@ -341,11 +333,8 @@ public:
 
 private:
   Mpu_region &operator[](unsigned i) &
-  { return _regions[i]; }
+  { return region(i); }
   Mpu_region &operator[](unsigned i) && = delete;
-
-  unsigned index(Mpu_region const *r) const
-  { return r - _regions; }
 
   Mpu_region *next(Mpu_region const *r) const
   {
@@ -375,6 +364,21 @@ private:
     // `r` is no longer in the tree, so this yields its former successor.
     return _used_tree.lower_bound_node(r->start());
   }
+
+  /**
+   * Double the capacity of the region list.
+   *
+   * Only available with MPUltiplex. The declaration is unconditional
+   * here because call sites guard it with
+   * `if constexpr (TAG_ENABLED(mpultiplex))`, and discarded statements outside
+   * of templates still need declared names. Without MPUltiplex it is left
+   * undefined, so an unguarded call fails to link.
+   *
+   * Growing does not move regions: pointers to them stay valid.
+   *
+   * \return The new size of the region set.
+   */
+  size_t grow();
 
   /**
    * Inserts a new region.
@@ -432,6 +436,52 @@ private:
   Mpu_regions_mask _reserved;
   Mpu_regions_mask _used_mask;  ///< Bit mask of occupied regions
   Region_tree _used_tree;       ///< Sorted tree (by address) of used regions
+};
+
+//---------------------------------------------------------------------------
+INTERFACE [mpu && !mpultiplex]:
+
+EXTENSION class Mpu_regions
+{
+public:
+  /**
+   * Construct new MPU region list.
+   *
+   * \param reserved  Map of regions that are not allocatable.
+   */
+  explicit Mpu_regions(Mpu_regions_mask const &reserved)
+  : _size(Mpu::regions()), _reserved(reserved)
+  {}
+
+  enum class Init { Reserved_regions };
+
+  /**
+   * Construct new MPU region list.
+   *
+   * This is *not* a copy constructor! The other Mpu_regions object that is
+   * passed will be used as a reserved-regions template. To enable fast
+   * context switches, the used regions of the other object are still copied.
+   */
+  explicit Mpu_regions(Mpu_regions const &other, Init)
+  : _size(other._size), _reserved(other._reserved)
+  {
+    _reserved |= other._used_mask;
+    for (Mpu_region const &i : other._used_tree)
+      {
+        unsigned idx = other.index(&i);
+        Mpu_region &r = (*this)[idx];
+        r.start(i.start());
+        r.end(i.end());
+        r.attr(i.attr());
+      }
+  }
+
+private:
+  Mpu_region const &region(unsigned i) const { return _regions[i]; }
+  Mpu_region &region(unsigned i) { return _regions[i]; }
+
+  unsigned index(Mpu_region const *r) const { return r - _regions; }
+
   Mpu_region _regions[Mem_layout::Mpu_regions];
 };
 
@@ -526,7 +576,25 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
   // Could not join an existing region. We need to allocate a new slot.
   r = find_free(slot);
   if (!r)
-    return Mpu_regions_update(Mpu_regions_update::Error_no_mem);
+    {
+      if constexpr (!TAG_ENABLED(mpultiplex))
+        return Mpu_regions_update(Mpu_regions_update::Error_no_mem, size());
+      else
+        {
+          // Growing cannot free an explicitly requested slot that is in use.
+          if (slot >= 0)
+            return Mpu_regions_update(Mpu_regions_update::Error_no_mem,
+                                      size());
+
+          // Merging an empty update only grows `updates` to the new size.
+          // Unlike resize(), `|=` is available with and without MPUltiplex.
+          Mpu_regions_update m(grow());
+          updates |= m;
+
+          r = find_free();
+          assert(r);
+        }
+    }
 
   // No reinsertion needed, because 'r' was free, therefore unused.
   modify<Full>(r, start, end, attr);
@@ -539,8 +607,9 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
 /**
  * Delete region.
  *
- * Deleting a part of a region will result in occupying another slot. If
- * this fails, the whole mapping will be removed.
+ * Deleting the middle part of a region will result in occupying another
+ * slot. If no slot is free, the region list is grown with MPUltiplex.
+ * Without it, the whole mapping is removed.
  *
  * \param start      Start of deleted region
  * \param end        End of deleted regions
@@ -574,8 +643,24 @@ Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
         }
       else if (i->start() < start && i->end() > end)
         {
-          // unmap range falls inside of region -> try to split
+          // unmap range falls inside of region -> split
           Mpu_region *r = find_free();
+          if constexpr (TAG_ENABLED(mpultiplex))
+            {
+              if (!r)
+                {
+                  // Growing does not move regions, `i` stays valid.
+                  // Merging an empty update only grows `updates` to the new
+                  // size. Unlike resize(), `|=` is available with and without
+                  // MPUltiplex.
+                  Mpu_regions_update m(grow());
+                  updates |= m;
+
+                  r = find_free();
+                  assert(r);
+                }
+            }
+
           if (r)
             {
               updates.set_updated(index(r));
