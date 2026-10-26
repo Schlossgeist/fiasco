@@ -51,17 +51,10 @@ public:
 template<typename DYN, typename RELOC>
 struct Elf
 {
-  static inline unsigned long
-  elf_dynamic_section()
-  {
-    extern char _DYNAMIC[] __attribute__ ((visibility ("hidden")));
-    return reinterpret_cast<unsigned long>(&_DYNAMIC[0]);
-  }
-
   static inline void
-  relocate(unsigned long load_addr)
+  relocate(unsigned long load_addr, unsigned long dyn_addr)
   {
-    DYN *dyn = reinterpret_cast<DYN *>(elf_dynamic_section());
+    DYN *dyn = reinterpret_cast<DYN *>(dyn_addr);
     unsigned long relcnt = 0;
     RELOC *rel = nullptr;
 

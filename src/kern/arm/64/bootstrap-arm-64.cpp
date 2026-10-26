@@ -103,9 +103,9 @@ struct Elf64_rela
 
 extern "C"
 void
-relocate(unsigned long load_addr)
+relocate(unsigned long load_addr, unsigned long dyn_addr)
 {
-  Elf<Elf64_dyn, Elf64_rela>::relocate(load_addr);
+  Elf<Elf64_dyn, Elf64_rela>::relocate(load_addr, dyn_addr);
 }
 
 PRIVATE
@@ -497,14 +497,16 @@ asm
 "     adr  x10, _start                 \n"
 "     add  x9, x9, x10                 \n"
 "     mov  sp, x9                      \n"
-"     adrp x9, :got:_start             \n"
-"     ldr  x9, [x9, #:got_lo12:_start] \n"
+"     adr  x10, start_of_loader        \n" // refer pc-relative to ABSOLUTE symbol
+"     adrp x9, :got:start_of_loader    \n" // refer to the same symbol using GOT
+"     ldr  x9, [x9, :got_lo12:start_of_loader]\n"
 "     sub  x0, x10, x9                 \n"
 "     mov  x19, x0                     \n"
+"     adr  x1, _DYNAMIC                \n" // force pc-relative addressing
 "     bl   relocate                    \n"
 "     mov  x0, x19                     \n"
 "     bl   bootstrap_main              \n"
-".p2align 3                            \n"  // running uncached and need align!
+".p2align 3                            \n"
 ".Lstack_offs: .8byte (_stack - _start)\n"
 ".previous                             \n"
 ".section .bss                         \n"

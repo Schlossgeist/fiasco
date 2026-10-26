@@ -65,7 +65,8 @@ bootstrap_ldflags  = $(LDFLAGS) $(LD_EMULATION_FLAG)
 bootstrap_ldflags += -static -pie --no-dynamic-linker -z text
 bootstrap_ldflags += -defsym kernel_load_addr=$(CONFIG_KERNEL_LOAD_ADDR)
 bootstrap_ldflags += -T$(bootstrap_lds)
-bootstrap_ldflags += $(if $(filter clang,$(LD_TYPE)),-z rel)
+bootstrap_ldflags += $(if $(filter clang,$(LD_TYPE)),$\
+                        -z $(if $(CONFIG_BIT32),rel,rela))
 
 bootstrap_export   = _start start_of_loader end_of_bootstrap_info
 bootstrap_strip    = --strip-all $(addprefix --keep-symbol=,$(bootstrap_export))

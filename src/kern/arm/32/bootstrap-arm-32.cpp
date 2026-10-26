@@ -361,6 +361,8 @@ asm
 "     ldr  a2, [a1, a3]                \n"
 "     sub  a1, r12, a2                 \n"
 "     mov  v1, a1                      \n"
+"     ldr  a3, .L_DYNAMIC              \n" // force pc-relative addressing
+" 1:  add  a2, pc, a3                  \n"
 "     bl   relocate                    \n"
 "     mov  a1, v1                      \n"
 "     bl   bootstrap_main              \n"
@@ -369,6 +371,8 @@ asm
 ".L_GOT:                               \n"
 "     .word _GLOBAL_OFFSET_TABLE_ - .L_GOT \n"
 "     .word _start(GOT)                \n"
+".L_DYNAMIC:                           \n"
+"     .word _DYNAMIC-(1b+8)            \n"
 ".previous                             \n"
 ".section .bss                         \n"
 ".p2align 3                            \n"
@@ -407,9 +411,9 @@ struct Elf32_rel
 
 extern "C"
 void
-relocate(unsigned long load_addr)
+relocate(unsigned long load_addr, unsigned long dyn_addr)
 {
-  Elf<Elf32_dyn, Elf32_rel>::relocate(load_addr);
+  Elf<Elf32_dyn, Elf32_rel>::relocate(load_addr, dyn_addr);
 }
 
 PRIVATE
