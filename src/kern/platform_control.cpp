@@ -10,7 +10,7 @@ public:
   static int cpu_allow_shutdown(Cpu_number cpu, bool allow);
 
   /**
-   * Initate a system suspend.
+   * Initiate a system suspend.
    *
    * Blocks the calling thread until the system resumes from the suspend.
    *

@@ -103,10 +103,10 @@ public:
   virtual ~Cpu_pm_callbacks() = 0;
 
   /**
-   * Register power management classbacks on a specific CPU.
+   * Register power management callbacks on a specific CPU.
    *
    * This method is allowed to be called at most once (since each object
-   * inheriting from #Cpu_pm_callbacks can only be enququed into a single
+   * inheriting from #Cpu_pm_callbacks can only be enqueued into a single
    * per-CPU list of callbacks as it a list element itself).
    *
    * \param cpu  CPU where to run the power management callbacks on.
