@@ -108,6 +108,13 @@ public:
   public:
     Iterator() {}
 
+    Iterator operator + (int offs) const
+    {
+      Iterator i = *this;
+      i += offs;
+      return i;
+    }
+
     Iterator const &operator += (int offs) &
     {
       if (offs < 0)
