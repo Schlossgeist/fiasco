@@ -230,7 +230,7 @@ static
 void
 Jdb_list_timeouts::show_header()
 {
-  printf("%s  type           timeout    owner       name\033[m\033[K\n",
+  printf("%s  type           timeout             owner   name\033[m\033[K\n",
          Jdb::esc_emph);
 }
 
@@ -238,48 +238,44 @@ static
 void
 Jdb_list_timeouts::list_timeouts_show_timeout(Timeout *t)
 {
-  char const *type;
-  char ownerstr[32] = "";
+  String_buf<18> owner_str;
   Thread *owner;
   Signed64 timeout = t->get_timeout(Jdb::system_clock_on_enter());
 
   Kconsole::console()->getchar_chance();
 
+  char const *type;
+  // For showing the owner, don't use "%p" but use %lx without '#' to have the
+  // same content as the list of kernel objects ('Q').
   switch (get_type(t))
     {
     case Timeout_timeslice:
       type  = "timeslice";
       owner = get_owner(t);
       if (owner)
-        snprintf(ownerstr, sizeof(ownerstr), "  %p",
-                 static_cast<void *>(owner));
+        owner_str.printf("%16lx", reinterpret_cast<Address>(owner));
       else
-       strcpy(ownerstr, "destruct");
+        owner_str.printf("%16s", "destruct");
       break;
     default:
-      snprintf(ownerstr, sizeof(ownerstr), "  0x%lx",
-               reinterpret_cast<Address>(t));
+      owner_str.printf("%16lx", reinterpret_cast<Address>(t));
       type  = "unkn";
       owner = nullptr;
       break;
     }
 
-  printf("  %-10s   ", type);
+  String_buf<11> time_str;
   if (timeout < 0)
-    putstr("   over     ");
+    time_str.printf("   over");
   else
-    {
-      String_buf<12> time_str;
-      Jdb::write_ll_ns(&time_str, timeout * 1000, false);
-      putstr(time_str.c_str());
-    }
+    Jdb::write_ll_ns(&time_str, timeout * 1000, false);
 
   Jdb_kobject_name *nx = nullptr;
-
   if (owner)
     nx = Jdb_kobject_extension::find_extension<Jdb_kobject_name>(owner);
 
-  printf(" %s  %s\033[K\n", ownerstr, nx ? nx->name() : "");
+  printf("  %-10s %11s  %s   %s\033[K\n",
+         type, time_str.c_str(), owner_str.c_str(), nx ? nx->name() : "");
 }
 
 IMPLEMENT
