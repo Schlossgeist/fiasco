@@ -6,7 +6,27 @@ class Platform_control
 {
 public:
   static void init(Cpu_number);
+
+  /**
+   * Report if this platform support shutting down CPUs.
+   *
+   * \retval false  CPU shutdown not supported.
+   * \retval true   CPU shutdown supported.
+   */
   static bool cpu_shutdown_available();
+
+  /**
+   * Allow the specified CPU to shut down.
+   *
+   * \param cpu    CPU which should be shut down.
+   * \param allow  If `true`, shut down the CPU. If `false`, boot the CPU.
+   *
+   * \retval 0                Shutting down / booting was successful.
+   * \retval -L4_err::ENodev  Operation not supported, either because the CPU is
+   *                          still online and shall be shut down, or if the CPU
+   *                          is not online but shall be booted, or because this
+   *                          operation is not supported on this platform.
+   */
   static int cpu_allow_shutdown(Cpu_number cpu, bool allow);
 
   /**
@@ -24,7 +44,25 @@ public:
    * \return 0 on success, otherwise error code.
    */
   static int system_suspend(Mword extra);
+
+
+  /**
+   * Power-off the system.
+   *
+   * \pre Must only be called from within a valid thread context, because
+   *      current_cpu() must be functional.
+   *
+   * \note This function returns if powering-off the system is not implemented
+   *       on this platform.
+   */
   static void system_off();
+
+  /**
+   * Reboot the system.
+   *
+   * \pre Must only be called from within a valid thread context, because
+   *      current_cpu() must be functional.
+   */
   [[noreturn]] static void system_reboot();
 };
 
