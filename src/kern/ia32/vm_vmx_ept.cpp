@@ -81,12 +81,6 @@ private:
 
   enum
   {
-    EFER_LME = 1 << 8,
-    EFER_LMA = 1 << 10,
-  };
-
-  enum
-  {
     Exit_irq           = 1U,
     Exit_ept_violation = 48U,
   };
