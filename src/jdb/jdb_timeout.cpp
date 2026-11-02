@@ -307,6 +307,7 @@ Jdb_list_timeouts::list()
                Timeout_iter(&Timeout_q::timeout_queue.cpu(Cpu_number::first()), true));
   Iter first = to_cont.begin();
   Iter current = first;
+  unsigned long const page = Jdb_screen::height() - 3;
   Iter end = to_cont.end();
   --end;
 
@@ -321,11 +322,10 @@ Jdb_list_timeouts::list()
         {
           Jdb::cursor(2, 1);
           y_max = 0;
-          // need to check for y_max > Jdb_screen::height()-3 here too
           for (Iter i = current; i != to_cont.end(); ++i, ++y_max)
             list_timeouts_show_timeout(*i);
 
-          for (unsigned i=y_max; i<Jdb_screen::height()-3; ++i)
+          for (unsigned i = y_max; i < page; ++i)
             putstr("\033[K\n");
 
           Jdb::printf_statline("timouts", "<CR>=select owner", "_");
@@ -361,7 +361,7 @@ Jdb_list_timeouts::list()
                 case KEY_PAGE_UP:
                     {
                       Iter i = current;
-                      current -= Jdb_screen::height()-3;
+                      current -= page;
                       redraw =  i != current;
                       if (!redraw)
                         y = 0;
@@ -370,7 +370,7 @@ Jdb_list_timeouts::list()
                 case KEY_PAGE_DOWN:
                     {
                       Iter i = current;
-                      current += Jdb_screen::height()-3;
+                      current += page;
                       if (current == to_cont.end())
                         current = end;
                       redraw =  i != current;
