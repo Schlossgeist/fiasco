@@ -298,8 +298,6 @@ static
 void
 Jdb_list_timeouts::list()
 {
-  unsigned y, y_max;
-
   typedef Rnd_container<Timeout_iter> Cont;
   typedef Cont::Iterator Iter;
 
@@ -316,12 +314,12 @@ Jdb_list_timeouts::list()
   show_header();
   for (;;)
     {
-      y = current.pos();
+      unsigned y = current.pos();
 
-      for (bool resync=false; !resync; )
+      for (bool resync = false; !resync; )
         {
           Jdb::cursor(2, 1);
-          y_max = 0;
+          unsigned y_max = 0;
           for (Iter i = current; i != to_cont.end(); ++i, ++y_max)
             list_timeouts_show_timeout(*i);
 
@@ -330,10 +328,10 @@ Jdb_list_timeouts::list()
 
           Jdb::printf_statline("timouts", "<CR>=select owner", "_");
 
-          for (bool redraw=false; !redraw; )
+          for (bool redraw = false; !redraw; )
             {
-              Jdb::cursor(y+2, 1);
-              switch (int c=Jdb_core::getchar())
+              Jdb::cursor(y + 2, 1);
+              switch (int c = Jdb_core::getchar())
                 {
                 case KEY_CURSOR_UP:
                   if (y > 0)
@@ -359,25 +357,25 @@ Jdb_list_timeouts::list()
                     }
                   break;
                 case KEY_PAGE_UP:
-                    {
-                      Iter i = current;
-                      current -= page;
-                      redraw =  i != current;
-                      if (!redraw)
-                        y = 0;
-                    }
-                  break;
+                  {
+                    Iter i = current;
+                    current -= page;
+                    redraw = i != current;
+                    if (!redraw)
+                      y = 0;
+                    break;
+                  }
                 case KEY_PAGE_DOWN:
-                    {
-                      Iter i = current;
-                      current += page;
-                      if (current == to_cont.end())
-                        current = end;
-                      redraw =  i != current;
-                      if (!redraw)
-                        y = y_max;
-                    }
-                  break;
+                  {
+                    Iter i = current;
+                    current += page;
+                    if (current == to_cont.end())
+                      current = end;
+                    redraw = i != current;
+                    if (!redraw)
+                      y = y_max;
+                    break;
+                  }
                 case KEY_CURSOR_HOME:
                   redraw = current != first;
                   current = first;
