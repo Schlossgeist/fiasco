@@ -2759,6 +2759,14 @@ Vmx::pm_on_suspend(Cpu_number) override
 }
 
 PUBLIC
+void
+Vmx::pm_on_shutdown() override
+{
+  if (Vmx::cpus.current().vmx_enabled())
+    asm volatile("vmxoff" ::: "cc");
+}
+
+PUBLIC
 Vmx::Vmx(Cpu_number cpu)
   : _vmx_enabled(false), _has_vpid(false), _current_vmcs(nullptr)
 {

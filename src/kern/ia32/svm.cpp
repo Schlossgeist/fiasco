@@ -92,6 +92,18 @@ Svm::pm_on_resume(Cpu_number) override
   _last_user_vmcb = nullptr;
 }
 
+PUBLIC
+void
+Svm::pm_on_shutdown() override
+{
+  asm volatile ("clgi");
+
+  Unsigned64 efer;
+  efer = Cpu::rdmsr(Msr::Ia32_efer);
+  efer &= ~Efer_svme;
+  Cpu::wrmsr(efer, Msr::Ia32_efer);
+}
+
 PUBLIC static inline NEEDS["cpu.h"]
 bool
 Svm::cpu_svm_available(Cpu_number cpu)

@@ -70,6 +70,7 @@ public:
 IMPLEMENTATION:
 
 #include "l4_types.h"
+#include "pm.h"
 #include "reset.h"
 
 IMPLEMENT_DEFAULT inline
@@ -92,14 +93,17 @@ int
 Platform_control::cpu_allow_shutdown(Cpu_number, bool)
 { return -L4_err::ENodev; }
 
-IMPLEMENT_DEFAULT inline
+IMPLEMENT_DEFAULT inline NEEDS["pm.h"]
 void
 Platform_control::system_off()
-{}
+{
+  // As there is actually no shutdown, do NOT execute the shutdown hooks!
+}
 
-IMPLEMENT_DEFAULT [[noreturn]] inline NEEDS["reset.h"]
+IMPLEMENT_DEFAULT [[noreturn]] inline NEEDS["pm.h", "reset.h"]
 void
 Platform_control::system_reboot()
 {
+  Cpu_pm_callbacks::run_on_shutdown_hooks();
   platform_reset();
 }

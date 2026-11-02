@@ -161,6 +161,7 @@ static void take_boot_cpu_online() {}
 IMPLEMENTATION:
 
 #include "io.h"
+#include "pm.h"
 #include "thread_state.h"
 
 PUBLIC static
@@ -267,6 +268,8 @@ IMPLEMENT_OVERRIDE [[noreturn]]
 static void
 Platform_control::system_reboot()
 {
+  Cpu_pm_callbacks::run_on_shutdown_hooks();
+
   auto guard = lock_guard(cpu_lock);
 
   // The _fadt_reset_value and _fadt_reset_regs_addr values are only set

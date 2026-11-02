@@ -2,6 +2,7 @@ INTERFACE:
 
 #include <cxx/dlist>
 #include <cassert>
+#include "context_base.h"
 #include "per_cpu_data.h"
 
 /**
@@ -66,8 +67,8 @@ private:
  * CPU-local power management callbacks.
  *
  * Inheriting from this class allows to define callbacks that are executed
- * before suspend and after resume on a CPU specified by calling the
- * #register_pm() method.
+ * before suspend, after resume, and before shutdown/reboot on a CPU specified
+ * by calling the #register_pm() method.
  */
 class Cpu_pm_callbacks : public cxx::D_list_item
 {
@@ -99,6 +100,13 @@ public:
    * \param current_cpu  Current CPU number.
    */
   virtual void pm_on_resume(Cpu_number current_cpu) = 0;
+
+  /**
+   * Shutdown callback, to be defined by the inheriting class.
+   *
+   * \note The callback is executed for the current CPU.
+   */
+  virtual void pm_on_shutdown() = 0;
 
   virtual ~Cpu_pm_callbacks() = 0;
 
@@ -151,6 +159,20 @@ public:
 
     for (auto const &&i: list)
       i->pm_on_resume(current_cpu);
+  }
+
+  /**
+   * Run power management reboot/shutdown callbacks registered for the current
+   * CPU.
+   *
+   * \note The callbacks are executed exclusively for the current CPU.
+   */
+  static void run_on_shutdown_hooks()
+  {
+    List &list = _list.cpu(current_cpu());
+
+    for (auto const &&i: list)
+      i->pm_on_shutdown();
   }
 
 private:
