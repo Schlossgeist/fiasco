@@ -43,7 +43,7 @@ private:
 
   int skip_empty(To_iter *c, int i)
   {
-    while (*c == _q->first(i).end() && i < static_cast<int>(_q->queues()))
+    while (*c == _q->first(i).end() && i + 1 < static_cast<int>(_q->queues()))
       {
         ++i;
         *c = _q->first(i).begin();
@@ -327,13 +327,16 @@ Jdb_list_timeouts::list()
         {
           Jdb::cursor(2, 1);
           unsigned y_max = 0;
-          for (Iter i = current; i != to_cont.end(); ++i, ++y_max)
+          for (Iter i = current; i != to_cont.end() && y_max < page; ++i, ++y_max)
             list_timeouts_show_timeout(*i);
+
+          if (y_max > 0 && y >= y_max)
+            y = y_max - 1;
 
           for (unsigned i = y_max; i < page; ++i)
             putstr("\033[K\n");
 
-          Jdb::printf_statline("timouts", "<CR>=select owner", "_");
+          Jdb::printf_statline("timeouts", "<CR>=select owner", "_");
 
           for (bool redraw = false; !redraw; )
             {
@@ -351,16 +354,12 @@ Jdb_list_timeouts::list()
                     }
                   break;
                 case KEY_CURSOR_DOWN:
-                  if (y < y_max)
+                  if (y + 1 < y_max)
                     y++;
-                  else
+                  else if (current + y_max != to_cont.end())
                     {
-                      Iter i = current;
-                      ++current;
-
-                      if (current == to_cont.end())
-                        current = i;
-                      redraw = i != current;
+                      current += 1;
+                      redraw = true;
                     }
                   break;
                 case KEY_PAGE_UP:
@@ -379,8 +378,8 @@ Jdb_list_timeouts::list()
                     if (current == to_cont.end())
                       current = end;
                     redraw = i != current;
-                    if (!redraw)
-                      y = y_max;
+                    if (!redraw && y_max > 0)
+                      y = y_max - 1;
                     break;
                   }
                 case KEY_CURSOR_HOME:
@@ -391,16 +390,13 @@ Jdb_list_timeouts::list()
                 case KEY_CURSOR_END:
                   redraw = current != end;
                   current = end;
-                  y = y_max;
+                  y = 0;
                   break;
                 case KEY_RETURN:
                 case KEY_RETURN_2:
                   if (jdb_show_tcb != nullptr)
-                    {
-                      Thread *owner;
-                      Iter i = current;
-                      i += y;
-                      if (i != to_cont.end() && (owner = get_owner(*i)))
+                    if (Iter i = current + y; i != to_cont.end())
+                      if (Thread *owner = get_owner(*i))
                         {
                           if (!jdb_show_tcb(owner, 1))
                             return;
@@ -408,7 +404,6 @@ Jdb_list_timeouts::list()
                           show_header();
                           redraw = 1;
                         }
-                    }
                   break;
                 case KEY_ESC:
                   Jdb::abort_command();
