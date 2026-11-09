@@ -271,6 +271,8 @@ public:
 //------------------------------------------------------------------
 IMPLEMENTATION [arm && 64bit && mpu && arm_v8]:
 
+#include "minmax.h"
+
 IMPLEMENT constexpr
 Mpu_region_base::Mpu_region_base()
 : prbar(~0x3fUL), prlar(0)
@@ -351,61 +353,43 @@ Mpu_region_base::disable()
 }
 
 
-IMPLEMENT static inline
+IMPLEMENT static inline NEEDS["minmax.h"]
 unsigned
 Mpu::regions()
 {
-  return Mpu_arm::regions();
-}
-
-IMPLEMENT static
-void
-Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
-          bool inplace)
-{
-  unsigned i = 0;
-  while (i < touched.size() && (i = touched.ffs(i)))
-    {
-      Mpu_arm::prselr(i - 1);
-      if (!inplace && (Mpu_arm::prlar() & Mpu_region_base::Enabled))
-        {
-          // Always disable first! Otherwise a colliding region might exist
-          // briefly after writing prbar!
-          Mpu_arm::prlar(0);
-          Mem::isb();
-        }
-
-      Mpu_arm::prbar(regions[i - 1].prbar);
-      Mpu_arm::prlar(regions[i - 1].prlar);
-    }
-
-  // PRSELR must be 0 because it's assumed by kernel entry/exit code!
-  Mpu_arm::prselr(0);
+  // The kernel uses at most Mem_layout::Mpu_regions hardware regions. Code
+  // that needs the real number of hardware regions, e.g. to clear all of them
+  // in Mpu_arm::init() or to switch the EL1 MPU state of guests, must use
+  // Mpu_arm::regions() or Mpu_arm_el1::regions() directly.
+  return 16;
+  return min<unsigned>(Mpu_arm::regions(), Mem_layout::Mpu_regions);
 }
 
 IMPLEMENT static
 void
 Mpu::update(Mpu_regions const &regions)
 {
-  Mpu_regions_mask reserved = regions.reserved();
+  // Without MPUltiplex this is `regions` itself, otherwise the snapshot
+  // providing the physical placement.
+  auto const &src = Mpu::prepare_update(regions);
 
   // Disable regions that we're updating. Otherwise there is the possibility to
   // have an invalid, colliding region when prbar is updated and the current
   // prlar of the updated region is still enabled.
-  Mpu_arm::prenr(Mpu_arm::prenr() & *reserved.raw());
+  Mpu_arm::prenr(Mpu_arm::prenr() & src.hw_keep_mask());
 
 #define UPDATE(base, i)                                         \
   do                                                            \
     {                                                           \
       if constexpr (((base) + (i)) < Mem_layout::Mpu_regions)   \
-        Mpu_arm::prxar<(i)>(regions[(base) + (i)].prbar,        \
-                            regions[(base) + (i)].prlar);       \
+        Mpu_arm::prxar<(i)>(src.hw_slot((base) + (i)).prbar,    \
+                            src.hw_slot((base) + (i)).prlar);   \
     }                                                           \
   while (false)
 
   // We don't support more than 32 regions. Between 17 and 32 regions we have
   // to switch banks.
-  int idx = regions.size() - 1;
+  int idx = src.hw_count() - 1;
   if (idx > 15 && Mem_layout::Mpu_regions > 16) [[likely]]
     {
       // There is an ISB in Mpu_arm::prselr() below that synchronizes the above
@@ -467,5 +451,70 @@ Mpu::update(Mpu_regions const &regions)
   // on the kernel exit should be sufficient. But there we read/modify/write
   // PRENR. Hence, all region updates must be already committed to not read
   // stale data through PRENR.
+  Mem::isb();
+}
+
+//---------------------------------------------------------------------------
+IMPLEMENTATION [mpu && !mpultiplex]:
+
+IMPLEMENT static
+void
+Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
+          bool inplace)
+{
+  unsigned i = 0;
+  while (i < touched.size() && (i = touched.ffs(i)))
+    {
+      Mpu_arm::prselr(i - 1);
+      if (!inplace && (Mpu_arm::prlar() & Mpu_region_base::Enabled))
+        {
+          // Always disable first! Otherwise a colliding region might exist
+          // briefly after writing prbar!
+          Mpu_arm::prlar(0);
+          Mem::isb();
+        }
+
+      Mpu_arm::prbar(regions[i - 1].prbar);
+      Mpu_arm::prlar(regions[i - 1].prlar);
+    }
+
+  // PRSELR must be 0 because it's assumed by kernel entry/exit code!
+  Mpu_arm::prselr(0);
+}
+
+//---------------------------------------------------------------------------
+IMPLEMENTATION [mpu && mpultiplex]:
+
+IMPLEMENT static inline
+void
+Mpu::hw_write(unsigned p, Mpu_region_base const &r, bool inplace)
+{
+  Mpu_arm::prselr(p);
+  if (!inplace && (Mpu_arm::prlar() & Mpu_region_base::Enabled))
+    {
+      // Always disable first! Otherwise a colliding region might exist
+      // briefly after writing prbar!
+      Mpu_arm::prlar(0);
+      Mem::isb();
+    }
+
+  Mpu_arm::prbar(r.prbar);
+  Mpu_arm::prlar(r.prlar);
+}
+
+IMPLEMENT static inline
+void
+Mpu::hw_disable(unsigned p)
+{
+  Mpu_arm::prselr(p);
+  Mpu_arm::prlar(0);
+}
+
+IMPLEMENT static inline
+void
+Mpu::hw_done()
+{
+  // PRSELR must be 0 because it's assumed by kernel entry/exit code!
+  Mpu_arm::prselr(0);
   Mem::isb();
 }

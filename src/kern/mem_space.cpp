@@ -194,6 +194,17 @@ public:
    */
   static void reload_current();
 
+  /**
+   * Prepare the destruction of this memory space.
+   *
+   * Called while the owning task is destroyed, with the CPU lock released
+   * and before the final RCU grace period. Ensures that no CPU keeps state
+   * of this memory space that would outlive it.
+   *
+   * This is only needed on MPU systems, see `Mpu::Cpu_state`.
+   */
+  void prepare_destroy();
+
   static Mem_space *kernel_space()
   { return _kernel_space; }
 
@@ -622,6 +633,11 @@ Mem_space::pmem_to_phys(Address virt) const
 IMPLEMENT_DEFAULT static inline
 void
 Mem_space::reload_current()
+{}
+
+IMPLEMENT_DEFAULT inline
+void
+Mem_space::prepare_destroy()
 {}
 
 IMPLEMENT_DEFAULT inline NEEDS["mem_layout.h"]

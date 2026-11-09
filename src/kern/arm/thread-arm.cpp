@@ -209,6 +209,9 @@ Thread::pagefault_entry(const Mword pfa, Mword error_code,
   if (Thread::is_debug_exception_fsr(error_code)) [[unlikely]]
     return 0;
 
+  if (Thread::check_and_handle_multiplex_fault(pfa)) [[unlikely]]
+    return 1;
+
   Thread *t = current_thread();
 
   if (t->check_and_handle_mem_op_fault(error_code, ts)) [[unlikely]]
@@ -796,3 +799,21 @@ Thread::arm_esr_entry(Trap_state *ts)
     }
 }
 
+
+//-----------------------------------------------------------------------------
+IMPLEMENTATION [arm && mpu]:
+
+#include "mpu.h"
+
+PRIVATE static inline NEEDS["mpu.h"]
+bool
+Thread::check_and_handle_multiplex_fault(Mword pfa)
+{ return Mpu::check_and_handle_multiplex_fault(pfa); }
+
+//-----------------------------------------------------------------------------
+IMPLEMENTATION [arm && !mpu]:
+
+PRIVATE static inline
+bool
+Thread::check_and_handle_multiplex_fault(Mword)
+{ return false; }

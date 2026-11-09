@@ -111,7 +111,10 @@ public:
    * ku_mem of the active Context is mapped.
    */
   inline void load_ku_mem_regions() const
-  { Context_base::load_ku_mem_regions(_ku_mem_regions); }
+  {
+    // With MPUltiplex, the physical slots come from the loaded snapshot.
+    Context_base::load_ku_mem_regions(Mpu::ku_mem_mask(*_dir, _ku_mem_regions));
+  }
 
 private:
   inline void ku_mem_added(Mpu_regions_mask const& touched)
@@ -127,6 +130,17 @@ private:
   Dir_type _regions;
   Unsigned32 _ku_mem_regions = 0;
   Spin_lock<> _lock;
+
+  /**
+   * Calls `free_retired_regions()` when going out of scope. Declare it
+   * *before* the lock guard of `_lock` so that it runs after `_lock` was
+   * released.
+   */
+  struct Retired_regions_reaper
+  {
+    Mem_space *space;
+    ~Retired_regions_reaper() { space->free_retired_regions(); }
+  };
 };
 
 //---------------------------------------------------------------------------
@@ -453,6 +467,8 @@ Mem_space::v_insert([[maybe_unused]] Phys_addr phys,
                                                     !ku_mem);
   Mem_space::Status ret = Insert_ok;
 
+  // Adding regions may grow `_dir`.
+  Retired_regions_reaper reaper{this};
   auto guard = lock_guard(_lock);
 
   // This check must be done without interrupts to prevent thread migration.
@@ -600,6 +616,8 @@ Mem_space::v_delete(Vaddr virt, Page_order order,
   Mword end = start + (1UL << Page_order::val(order)) - 1U;
   Mpu_region_attr attr;
 
+  // Re-adding regions may grow `_dir`.
+  Retired_regions_reaper reaper{this};
   auto guard = lock_guard(_lock);
 
   // This check must be done without interrupts to prevent thread migration.
@@ -645,6 +663,36 @@ Mem_space::v_delete(Vaddr virt, Page_order order,
   return Page::Flags::None();
 }
 
+/**
+ * Free region arrays that `_dir` replaced when it grew.
+ *
+ * Snapshots of other CPUs may still reference base versions in a retired
+ * array. Before freeing the arrays, make every CPU this Mem_space is active
+ * on (`tlb_flush_current_cpu()` -> `sync_mpu_state()`) either reload its MPU
+ * state, which refreshes its snapshot, or drop its cached snapshot. The
+ * Mem_space was marked dirty when it grew.
+ *
+ * \pre `_lock` and the CPU lock are not held.
+ */
+PRIVATE
+void
+Mem_space::free_retired_regions()
+{
+  Dir_type::Retired *retired;
+  {
+    auto guard = lock_guard(_lock);
+    retired = _dir->take_retired();
+  }
+
+  if (!retired) [[likely]]
+    return;
+
+  tlb_flush_all_cpus();
+
+  auto guard = lock_guard(_lock);
+  _dir->free_retired(retired);
+}
+
 PUBLIC inline
 Mem_space::Mem_space(Ram_quota *q)
 : _quota(q), _dir(&_regions),
@@ -665,6 +713,24 @@ PUBLIC static inline
 Page_number
 Mem_space::canonize(Page_number v)
 { return v; }
+
+//----------------------------------------------------------------------------
+IMPLEMENTATION [arm && mpu && mpultiplex]:
+
+/**
+ * Snapshots of `_dir` cached on other CPUs would outlive it. Prevent new ones
+ * and drop the existing ones: a CPU only caches a snapshot of a Mem_space
+ * that was current there and keeps the TLB-active bit until the snapshot is
+ * dropped (see Mpu::Cpu_state). tlb_flush_all_cpus() orders the store before
+ * reading the TLB-active mask.
+ */
+IMPLEMENT_OVERRIDE
+void
+Mem_space::prepare_destroy()
+{
+  _dir->disable_snapshot_cache();
+  tlb_flush_all_cpus();
+}
 
 //----------------------------------------------------------------------------
 IMPLEMENTATION [arm && mpu && mp]:
@@ -688,6 +754,10 @@ Mem_space::sync_mpu_state()
           load_ku_mem_regions();
         }
     }
+  else
+    // Drop a cached snapshot before tlb_flush_current_cpu() clears the
+    // TLB-active bit, see Mpu::Cpu_state.
+    Mpu::drop_cached(*_dir);
 }
 
 PRIVATE inline

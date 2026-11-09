@@ -61,7 +61,11 @@ IMPLEMENTATION[arm && mp && mpu]:
 static void init_ap_cpu_mpu()
 {
   Mpu::init();
-  Mpu::sync(*Kmem::kdir, Kmem::kdir->used(), true);
+  // No thread context yet, the CPU starts multiplexing with its first
+  // Mpu::update(). Only the kernel image is accessible so far (see
+  // tramp-mp.S) but newer region versions live on the kernel heap: load the
+  // heap region first. It is never changed after boot, i.e. has no deltas.
+  Mpu::sync_early(*Kmem::kdir, Kmem::kdir->used(), true, Kpdir::Kernel_heap);
   Cpu::init_sctlr();
 }
 
