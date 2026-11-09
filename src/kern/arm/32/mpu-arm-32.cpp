@@ -336,25 +336,27 @@ IMPLEMENT static inline
 void
 Mpu::update(Mpu_regions const &regions)
 {
-  Mpu_regions_mask reserved = regions.reserved();
+  // Without MPUltiplex this is `regions` itself, otherwise the snapshot
+  // providing the physical placement.
+  auto const &src = Mpu::prepare_update(regions);
 
   // Disable regions that we're updating. Otherwise there is the possibility to
   // have an invalid, colliding region when prbar is updated and the current
   // prlar of the updated region is still enabled.
-  Mpu_arm::prenr_mask(*reserved.raw());
+  Mpu_arm::prenr_mask(src.hw_keep_mask());
   Mem::isb();
 
 #define UPDATE(i)                                                       \
   do                                                                    \
     {                                                                   \
       if constexpr (i < Mem_layout::Mpu_regions)                        \
-        Mpu_arm::prxar<(i)>(regions[(i)].prbar, regions[(i)].prlar);    \
+        Mpu_arm::prxar<(i)>(src.hw_slot(i).prbar, src.hw_slot(i).prlar); \
     }                                                                   \
   while (false)
 
   // Directly skip non-existing regions. We don't support more than 32 regions.
   static_assert(Mem_layout::Mpu_regions <= 32, "No more than 32 regions!");
-  switch (regions.size())
+  switch (src.hw_count())
     {
       default:
       case 32: UPDATE(31); [[fallthrough]];

@@ -109,18 +109,18 @@ Mpu::direct_write(unsigned slot, Mpu_region_base const &r, bool inplace)
   Mpu_arm::prlar(r.prlar);
 }
 
-//------------------------------------------------------------------
-IMPLEMENTATION [arm && mpu && arm_v8]:
-
-IMPLEMENT static
+IMPLEMENT static inline
 void
-Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
-          bool inplace)
+Mpu::hw_disable(unsigned p)
 {
-  unsigned i = 0;
-  while (i < touched.size() && (i = touched.ffs(i)))
-    direct_write(i - 1, regions[i - 1], inplace);
+  Mpu_arm::prselr(p);
+  Mpu_arm::prlar(0);
+}
 
+IMPLEMENT static inline
+void
+Mpu::hw_done()
+{
   // PRSELR must be 0 because it's assumed by kernel entry/exit code! The ISB
   // in Mpu_arm::prselr() commits the preceding region updates too.
   Mpu_arm::prselr(0);

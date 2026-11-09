@@ -111,7 +111,10 @@ public:
    * ku_mem of the active Context is mapped.
    */
   inline void load_ku_mem_regions() const
-  { Context_base::load_ku_mem_regions(_ku_mem_regions); }
+  {
+    // With MPUltiplex, the physical slots come from the loaded snapshot.
+    Context_base::load_ku_mem_regions(Mpu::ku_mem_mask(*_dir, _ku_mem_regions));
+  }
 
 private:
   inline void ku_mem_added(Mpu_regions_mask const& touched)
@@ -667,6 +670,24 @@ Mem_space::canonize(Page_number v)
 { return v; }
 
 //----------------------------------------------------------------------------
+IMPLEMENTATION [arm && mpu && mpultiplex]:
+
+/**
+ * Snapshots of `_dir` cached on other CPUs would outlive it. Prevent new ones
+ * and drop the existing ones: a CPU only caches a snapshot of a Mem_space
+ * that was current there and keeps the TLB-active bit until the snapshot is
+ * dropped (see Mpu::Cpu_state). tlb_flush_all_cpus() orders the store before
+ * reading the TLB-active mask.
+ */
+IMPLEMENT_OVERRIDE
+void
+Mem_space::prepare_destroy()
+{
+  _dir->disable_snapshot_cache();
+  tlb_flush_all_cpus();
+}
+
+//----------------------------------------------------------------------------
 IMPLEMENTATION [arm && mpu && mp]:
 
 DEFINE_PER_CPU Per_cpu<Unsigned32> Mem_space::_dir_update_state;
@@ -688,6 +709,10 @@ Mem_space::sync_mpu_state()
           load_ku_mem_regions();
         }
     }
+  else
+    // Drop a cached snapshot before tlb_flush_current_cpu() clears the
+    // TLB-active bit, see Mpu::Cpu_state.
+    Mpu::drop_cached(*_dir);
 }
 
 PRIVATE inline

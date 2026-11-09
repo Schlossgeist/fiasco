@@ -696,6 +696,10 @@ Task::destroy(Kobjects_list &reap_list) override
   // will be completely void of mappings.
   fpage_unmap(this, L4_fpage::all_spaces(L4_fpage::Rights::FULL()),
               L4_map_mask::full(), reap_list);
+
+  // The task may be deleted with the CPU lock held, so clean up per-CPU state
+  // of the memory space here.
+  static_cast<Mem_space *>(this)->prepare_destroy();
 }
 
 /*

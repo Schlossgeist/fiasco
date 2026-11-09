@@ -75,6 +75,9 @@ struct Mpu_region_base
   { return start() <= addr && addr <= end(); }
 };
 
+//---------------------------------------------------------------------------
+INTERFACE [mpu && !mpultiplex]:
+
 /**
  * A single MPU region.
  *
@@ -91,26 +94,164 @@ struct Mpu_region
   using Key_type = Mword;
   static Key_type key_of(Mpu_region const *r)
   { return r->start(); }
+
+  Mpu_region_base const &current() const { return *this; }
+
+  /// Nothing to merge without multiplexing.
+  void compact() {}
 };
 
 //---------------------------------------------------------------------------
 INTERFACE [mpu && mpultiplex]:
 
-EXTENSION struct Mpu_region
+#include <cxx/dlist>
+
+#include "panic.h"
+#include "ref_obj.h"
+
+/**
+ * One version of the contents of an MPU region.
+ *
+ * Snapshots reference versions via `Ref_ptr`. A version that is referenced by
+ * at least one snapshot is never modified.
+ *
+ * Every version holds one reference on itself on behalf of its owning
+ * `Mpu_region` from its creation on. Hence, the reference count never drops
+ * to zero through a `Ref_ptr`, and a count of one means that no snapshot
+ * references the version. Deltas are freed explicitly by their region.
+ */
+struct Mpu_region_version
+: public Mpu_region_base,
+  public Ref_cnt_obj
 {
+  Mpu_region_version()
+  { owner_ref(); }
+
+  Mpu_region_version(Mword start, Mword end, Mpu_region_attr a)
+  : Mpu_region_base(start, end, a)
+  { owner_ref(); }
+
+  explicit Mpu_region_version(Mpu_region_base const &b)
+  : Mpu_region_base(b)
+  { owner_ref(); }
+
+  Mpu_region_version(Mpu_region_version const &) = delete;
+
+  // Whether any snapshot references this version.
+  bool referenced() const { return ref_cnt() > 1; }
+
+  // Never called: the owner reference keeps the count above zero.
+  void operator delete(void *)
+  { panic("Mpu_region_version: unexpected delete via Ref_ptr\n"); }
+
 private:
+  void owner_ref() { inc_ref(); }
+};
+
+using Mpu_region_version_ptr = Ref_ptr<Mpu_region_version>;
+
+/**
+ * A newer version of an MPU region.
+ *
+ * Deltas form a list per region, ordered from oldest to newest. The base
+ * version lives in the `Mpu_region` object itself and is always the oldest
+ * one.
+ */
+struct Mpu_region_delta
+: public Mpu_region_version,
+  public cxx::D_list_item
+{
+  explicit Mpu_region_delta(Mpu_region_base const &b) : Mpu_region_version(b) {}
+};
+
+/**
+ * A single (logical) MPU region.
+ *
+ * Regions are organized as nodes in an AVL tree, keyed by start address. The
+ * region itself stores the *oldest* version of its contents. Modifications
+ * of a version that is referenced by a snapshot are appended as new deltas
+ * (copy-on-write). All accessors operate on the newest version. All
+ * addresses are inclusive!
+ */
+struct Mpu_region
+: private Mpu_region_version,
+  public cxx::Avl_tree_node
+{
+  Mpu_region() = default;
+  Mpu_region(Mword start, Mword end, Mpu_region_attr a)
+  : Mpu_region_version(start, end, a) {}
+
+  /**
+   * Regions never move: snapshots reference their base versions in place
+   * (see `Mpu_regions::reserve()`).
+   */
+  Mpu_region(Mpu_region const &) = delete;
+  Mpu_region &operator=(Mpu_region const &) = delete;
+
+  using Key_type = Mword;
+  static Key_type key_of(Mpu_region const *r)
+  { return r->start(); }
+
+  /// Newest version of this region.
+  Mpu_region_version const &current() const
+  { return has_deltas() ? *newest() : base(); }
+
+  /// Oldest version of this region.
+  Mpu_region_version const &base() const
+  { return *static_cast<Mpu_region_version const *>(this); }
+
+  Mword start() const { return current().start(); }
+  Mword end() const { return current().end(); }
+  Mpu_region_attr attr() const { return current().attr(); }
+  bool contains(Mword addr) const { return current().contains(addr); }
+
+  /// Newest version of this region, for taking a reference.
+  Mpu_region_version *current_ptr()
+  {
+    if (_deltas.empty())
+      return base_ptr();
+    return newest();
+  }
+
+  /// Oldest version of this region, for taking a reference.
+  Mpu_region_version *base_ptr()
+  { return static_cast<Mpu_region_version *>(this); }
+
+  bool has_deltas() const { return !_deltas.empty(); }
+
+  /// Merge and free versions that are no longer referenced by any snapshot.
+  void compact();
+
+private:
+  /// Modifications are reserved to `Mpu_regions`, see `Mpu_regions::modify`.
   friend class Mpu_regions;
+
+  void start(Mword start) { writable().start(start); }
+  void end(Mword end) { writable().end(end); }
+  void attr(Mpu_region_attr attr) { writable().attr(attr); }
+  void disable() { writable().disable(); }
+
+  Mpu_region_version &writable();
+
+  /// \pre `has_deltas()`
+  Mpu_region_delta *newest() const { return *--_deltas.end(); }
 
   /**
    * Logical index in the owning `Mpu_regions`, see `Mpu_regions::index()`.
-   * Fills the tail padding of the AVL tree node.
+   * Declared before `_deltas` so that it fills the tail padding of the AVL
+   * tree node.
    */
   unsigned short _index = 0;
+  cxx::D_list<Mpu_region_delta> _deltas;
 };
 
-static_assert(sizeof(Mpu_region) == sizeof(Mpu_region_base)
-                                    + sizeof(cxx::Avl_tree_node),
+static_assert(sizeof(Mpu_region) == sizeof(Mpu_region_version)
+                                    + sizeof(cxx::Avl_tree_node)
+                                    + sizeof(cxx::D_list<Mpu_region_delta>),
               "Mpu_region: _index should not increase its size");
+
+/// See mpu-mpultiplex.cpp.
+class Snapshot;
 
 using Mpu_region_block = Mpu_region[Config::Mpultiplex_block_size];
 
@@ -143,6 +284,21 @@ public:
                    bool inplace = false);
 
   /**
+   * Like `sync()`, but writes logical region i into physical slot i, in
+   * ascending order. Without MPUltiplex, this is what `sync()` does anyway.
+   * With MPUltiplex, it is for code running before multiplexing started or
+   * without a thread context, i.e. without access to per-CPU data (early boot
+   * of a CPU).
+   *
+   * Newer region versions (deltas) live on the kernel heap. A CPU that has
+   * not loaded the heap region yet relies on the ascending order: the heap
+   * region and all regions before it must not have deltas.
+   */
+  static void sync_early(Mpu_regions const &regions,
+                         Mpu_regions_mask const &touched,
+                         bool inplace = false);
+
+  /**
    * Update MPU with new regions list.
    *
    * Write back all `regions` into hardware.
@@ -166,6 +322,10 @@ private:
    *                 disable-update-enable sequence.
    */
   static void direct_write(unsigned slot, Mpu_region_base const &r, bool inplace);
+  // Disable physical slot `p`.
+  static void hw_disable(unsigned p);
+  // Finish a sequence of `direct_write()`/`hw_disable()` calls.
+  static void hw_done();
 };
 
 //---------------------------------------------------------------------------
@@ -321,14 +481,16 @@ INTERFACE [mpu]:
 class Mpu_regions
 {
   using Region_tree = cxx::Avl_tree<Mpu_region, Mpu_region>;
+  friend class Snapshot;
 
 public:
-  Mpu_region const &operator[](unsigned i) const &
-  { return region(i); }
-  Mpu_region const &operator[](unsigned i) const && = delete;
+  /// Newest version of region `i`.
+  Mpu_region_base const &operator[](unsigned i) const &
+  { return region(i).current(); }
+  Mpu_region_base const &operator[](unsigned i) const && = delete;
 
-  Mpu_regions_mask const &used()     const { return _used_mask; }
-  Mpu_regions_mask const &reserved() const { return _reserved; }
+  Mpu_regions_mask const& used()     const { return _used_mask; }
+  Mpu_regions_mask const& reserved() const { return _reserved; }
   unsigned                size()     const { return _size; }
 
 private:
@@ -352,33 +514,33 @@ private:
   }
 
   /**
+   * Grow the region set by allocating additional region blocks.
+   *
+   * Only available with MPUltiplex, see mpu-mpultiplex.cpp. It is declared
+   * here because call sites guard it with
+   * `if constexpr (TAG_ENABLED(mpultiplex))`, and discarded statements outside
+   * of templates still need declared names. Without MPUltiplex it is left
+   * undefined, so an unguarded call fails to link.
+   *
+   * \return The new size of the region set.
+   */
+  size_t grow();
+
+  /**
    * Remove a used region.
    *
    * \return The successor of the removed region, or nullptr if there is none.
    */
   Mpu_region *erase(Mpu_region *r)
   {
+    bump_generation();
     _used_mask.clear_bit(index(r));
+    r->compact();
     r->disable();
     _used_tree.erase(r->start());
     // `r` is no longer in the tree, so this yields its former successor.
     return _used_tree.lower_bound_node(r->start());
   }
-
-  /**
-   * Double the capacity of the region list.
-   *
-   * Only available with MPUltiplex. The declaration is unconditional
-   * here because call sites guard it with
-   * `if constexpr (TAG_ENABLED(mpultiplex))`, and discarded statements outside
-   * of templates still need declared names. Without MPUltiplex it is left
-   * undefined, so an unguarded call fails to link.
-   *
-   * Growing does not move regions: pointers to them stay valid.
-   *
-   * \return The new size of the region set.
-   */
-  size_t grow();
 
   /**
    * Inserts a new region.
@@ -388,6 +550,7 @@ private:
    */
   bool insert(Mpu_region *r)
   {
+    bump_generation();
     _used_mask.set_bit(index(r));
     auto [node, was_not_in_tree_before] = _used_tree.insert(r);
     return was_not_in_tree_before;
@@ -397,6 +560,8 @@ private:
    * Route all modifications to `Mpu_region`s through these `modify`-functions,
    * so that we can give the following correctness guarantees:
    *   - updates to the key value (start) lead to reinsertion into the AVL tree
+   *   - region versions no longer referenced by any snapshot are merged
+   *     before the region is changed
    */
   enum Modification { Start, End, Full };
   template<Modification M>
@@ -404,6 +569,8 @@ private:
   {
     static_assert(M == Start || M == End,
                   "Use modify<Full>(r, start, end, attr) for full assignment");
+    bump_generation();
+    r->compact();
     if constexpr (M == Start)
       {
         // future optimization opportunity:
@@ -427,6 +594,8 @@ private:
   void modify(Mpu_region *r, Mword start, Mword end, Mpu_region_attr attr)
   {
     static_assert(M == Full, "This overload is only for full assignment");
+    bump_generation();
+    r->compact();
     r->start(start);
     r->end(end);
     r->attr(attr);
@@ -476,17 +645,66 @@ public:
       }
   }
 
+  // Hardware view used by Mpu::update(): logical == physical slot.
+  Mpu_region_base const &hw_slot(unsigned i) const { return (*this)[i]; }
+  unsigned hw_count() const { return size(); }
+  Mword hw_keep_mask() const { return *_reserved.raw(); }
+
 private:
   Mpu_region const &region(unsigned i) const { return _regions[i]; }
   Mpu_region &region(unsigned i) { return _regions[i]; }
 
   unsigned index(Mpu_region const *r) const { return r - _regions; }
 
+  // Without multiplexing there are no snapshots to keep up to date.
+  void bump_generation() {}
+
   Mpu_region _regions[Mem_layout::Mpu_regions];
 };
 
+EXTENSION class Mpu
+{
+public:
+  static Mpu_regions const &prepare_update(Mpu_regions const &regions)
+  { return regions; }
+
+  static Unsigned32 ku_mem_mask(Mpu_regions const &, Unsigned32 logical)
+  { return logical; }
+
+  static void drop_cached(Mpu_regions const &) {}
+};
+
+//---------------------------------------------------------------------------
+IMPLEMENTATION [mpu && !mpultiplex]:
+
+IMPLEMENT static
+void
+Mpu::sync(Mpu_regions const &regions, Mpu_regions_mask const &touched,
+          bool inplace)
+{ sync_early(regions, touched, inplace); }
+
 //---------------------------------------------------------------------------
 IMPLEMENTATION [mpu]:
+
+#include "panic.h"
+
+IMPLEMENT static
+void
+Mpu::sync_early(Mpu_regions const &regions, Mpu_regions_mask const &touched,
+                bool inplace)
+{
+  // Without MPUltiplex, region sets never exceed the hardware regions.
+  if constexpr (TAG_ENABLED(mpultiplex))
+    if (unsigned i = touched.ffs(Mpu::regions()))
+      panic("MPU: region %u exceeds hardware before MPUltiplex init\n",
+            i - 1);
+
+  unsigned i = 0;
+  while (i < touched.size() && (i = touched.ffs(i)))
+    direct_write(i - 1, regions[i - 1], inplace);
+
+  hw_done();
+}
 
 /**
  * Try to add a new region.
@@ -608,8 +826,7 @@ Mpu_regions::add(Mword start, Mword end, Mpu_region_attr attr, bool join = true,
  * Delete region.
  *
  * Deleting the middle part of a region will result in occupying another
- * slot. If no slot is free, the region list is grown with MPUltiplex.
- * Without it, the whole mapping is removed.
+ * slot. The region list is grown if no slot is free.
  *
  * \param start      Start of deleted region
  * \param end        End of deleted regions
@@ -660,26 +877,24 @@ Mpu_regions::del(Mword start, Mword end, Mpu_region_attr *attr = nullptr)
                   assert(r);
                 }
             }
-
-          if (r)
-            {
-              updates.set_updated(index(r));
-
-              // No reinsertion needed, because 'r' was free, therefore unused.
-              modify<Full>(r, end + 1U, i->end(), i->attr());
-
-              modify<End>(i, start - 1U);
-
-              insert(r);
-            }
-          else
+          else if (!r)
             {
               // no further regions available -> delete whole region
               WARN("Dropped whole region [" L4_MWORD_FMT ":" L4_MWORD_FMT
                    "] while deleting  [" L4_MWORD_FMT ":" L4_MWORD_FMT "]\n",
                    i->start(), i->end(), start, end);
               erase(i);
+              break;
             }
+
+          updates.set_updated(index(r));
+
+          // No reinsertion needed, because 'r' was free, therefore unused.
+          modify<Full>(r, end + 1U, i->end(), i->attr());
+
+          modify<End>(i, start - 1U);
+
+          insert(r);
           break;
         }
       else if (i->start() < start)
