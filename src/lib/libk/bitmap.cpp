@@ -345,11 +345,18 @@ public:
 
   /**
    * Invert all bits.
+   *
+   * \note The bits beyond the bit range (but within the byte size range of
+   *       the storage type) are cleared.
    */
   void invert()
   {
     for (size_t i = 0; i < Nr_elems; ++i)
       this->_bits[i] = ~this->_bits[i];
+
+    if constexpr (BITS % Bpl != 0)
+      this->_bits[Nr_elems - 1]
+        &= (static_cast<Bitmap_elem_type>(1U) << (BITS % Bpl)) - 1;
   }
 
   /**
@@ -429,6 +436,20 @@ public:
       }
 
     return 0;
+  }
+
+  /**
+   * Get the number of bits set in this bitmap.
+   *
+   * \return Number of bits set in this bitmap.
+   */
+  unsigned popcount() const
+  {
+    unsigned count = 0;
+    for (size_t i = 0; i < Nr_elems; ++i)
+      count += __builtin_popcountl(this->_bits[i]);
+
+    return count;
   }
 
   /**
@@ -738,10 +759,18 @@ public:
 
   /**
    * Invert all bits.
+   *
+   * This is an optimized version for the single scalar unsigned long storage
+   * type.
+   *
+   * \note The bits beyond the bit range (but within the byte size range of
+   *       the storage type) are cleared.
    */
   void invert()
   {
     _bits = ~_bits;
+    if constexpr (BITS < Bpl)
+      _bits &= (1UL << BITS) - 1;
   }
 
   /**
@@ -810,6 +839,19 @@ public:
       return r + bit;
 
     return 0;
+  }
+
+  /**
+   * Get the number of bits set in this bitmap.
+   *
+   * This is an optimized version for the single scalar unsigned long storage
+   * type.
+   *
+   * \return Number of bits set in this bitmap.
+   */
+  unsigned popcount() const
+  {
+    return __builtin_popcountl(_bits);
   }
 
   /**
@@ -991,6 +1033,49 @@ public:
   {
     this->_and(o);
     return *this;
+  }
+
+  /** Or operator.
+   *
+   * Logically disjoint (or) the bitmap with a different bitmap.
+   *
+   * \param o  Bitmap to logically disjoint the bitmap with.
+   *
+   * \return New bitmap holding the result.
+   */
+  Bitmap operator |(Bitmap const &o) const
+  {
+    Bitmap r(*this);
+    r |= o;
+    return r;
+  }
+
+  /** And operator.
+   *
+   * Logically conjoint (and) the bitmap with a different bitmap.
+   *
+   * \param o  Bitmap to logically conjoint the bitmap with.
+   *
+   * \return New bitmap holding the result.
+   */
+  Bitmap operator &(Bitmap const &o) const
+  {
+    Bitmap r(*this);
+    r &= o;
+    return r;
+  }
+
+  /** Not operator.
+   *
+   * Logically invert (not) the bitmap, see invert().
+   *
+   * \return New bitmap holding the result.
+   */
+  Bitmap operator ~() const
+  {
+    Bitmap r(*this);
+    r.invert();
+    return r;
   }
 
   /**
