@@ -8,6 +8,7 @@ INTERFACE [mpu]:
 #include "mem_layout.h"
 #include "warn.h"
 
+struct Mpu_region;
 class Mpu_regions;
 
 /**
@@ -188,6 +189,17 @@ public:
    * Get number of supported regions.
    */
   static unsigned regions();
+
+private:
+  /**
+   * Directly write a region into the specified hardware slot.
+   *
+   * \param slot     The slot to update.
+   * \param r        The region to write.
+   * \param inplace  Update region directly instead of performing a safe
+   *                 disable-update-enable sequence.
+   */
+  static void direct_write(unsigned slot, Mpu_region const &r, bool inplace);
 };
 
 /**
