@@ -10,7 +10,6 @@ struct Mpu_arm_el1
     for (auto i = regions(); i > 1; i--)
       {
         prselr(i-1);
-        Mem::isb();
         prlar(0);
       }
   }
@@ -39,6 +38,16 @@ struct Mpu_arm_el1
   { Mword v; asm volatile("mrc p15, 0, %0, c6, c2, 1" : "=r"(v)); return v; }
 
   static void prselr(Mword v)
+  {
+    asm volatile(
+      "mcr p15, 0, %0, c6, c2, 1  \n"
+      "isb                        \n"
+      : : "r"(v));
+  }
+
+  // Caller has to synchronize if there is something that depends on the new
+  // value before the next context synchronization event, e.g. an ERET.
+  static void prselr_without_isb(Mword v)
   { asm volatile("mcr p15, 0, %0, c6, c2, 1" : : "r"(v)); }
 
   static void prenr_mask(Mword mask)
@@ -181,7 +190,12 @@ struct Mpu_arm_el2
   { asm volatile("mcr p15, 4, %0, c6, c3, 1" : : "r"(v)); }
 
   static void prselr(Mword v)
-  { asm volatile("mcr p15, 4, %0, c6, c2, 1" : : "r"(v)); }
+  {
+    asm volatile(
+      "mcr p15, 4, %0, c6, c2, 1  \n"
+      "isb                        \n"
+      : : "r"(v));
+  }
 
   static Mword prenr()
   {

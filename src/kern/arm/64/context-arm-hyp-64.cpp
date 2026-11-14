@@ -407,5 +407,7 @@ Context::load_ext_vcpu_state_mpu(Vm_state const *v)
 
 #undef LOAD_REGION
 
-  Mpu_arm_el1::prselr(v->mpu.prselr);
+  // No ISB: the ERET into the guest synchronizes this write, and the kernel
+  // does not access guest regions through it.
+  Mpu_arm_el1::prselr_without_isb(v->mpu.prselr);
 }

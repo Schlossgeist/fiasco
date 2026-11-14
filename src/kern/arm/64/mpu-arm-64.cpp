@@ -49,6 +49,11 @@ struct Mpu_arm_el1
       : : "r"(v));
   }
 
+  // Caller has to synchronize if there is something that depends on the new
+  // value before the next context synchronization event, e.g. an ERET.
+  static void prselr_without_isb(Mword v)
+  { asm volatile("msr S3_0_c6_c2_1, %0" : : "r"(v)); } // PRSELR_EL1
+
   static Mword prenr()
   {
     Mword v;
