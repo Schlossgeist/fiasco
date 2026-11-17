@@ -1,6 +1,7 @@
 IMPLEMENTATION [arm && mpu && arm_v8]:
 
 #include "mem.h"
+#include "minmax.h"
 
 IMPLEMENT constexpr
 Mpu_region_base::Mpu_region_base()
@@ -76,10 +77,20 @@ Mpu_region_base::disable()
 { prlar &= ~Enabled; }
 
 
-IMPLEMENT static inline
+IMPLEMENT static inline NEEDS["minmax.h"]
 unsigned
 Mpu::regions()
-{ return Mpu_arm::regions(); }
+{
+  // The kernel uses at most Mem_layout::Mpu_regions hardware regions: region
+  // lists and masks have a fixed capacity of Mem_layout::Mpu_regions without
+  // MPUltiplex. Clamping here, instead of at individual users like
+  // Mpu_regions, ensures that all code sizing region lists and masks by
+  // Mpu::regions() agrees on the same number.
+  // Code that needs the real number of hardware regions, e.g. to clear all of
+  // them in Mpu_arm::init() or to switch the EL1 MPU state of guests, must use
+  // Mpu_arm::regions() or Mpu_arm_el1::regions() directly.
+  return min<unsigned>(Mpu_arm::regions(), Mem_layout::Mpu_regions);
+}
 
 IMPLEMENT static inline NEEDS["mem.h"]
 void

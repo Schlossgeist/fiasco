@@ -128,6 +128,8 @@ public:
 
   /**
    * Get number of supported regions.
+   *
+   * \return Number of hardware regions, but at most Mem_layout::Mpu_regions.
    */
   static unsigned regions();
 
@@ -266,10 +268,7 @@ public:
    */
   explicit Mpu_regions(Mpu_regions_mask const &reserved)
   : _size(Mpu::regions()), _reserved(reserved)
-  {
-    if (_size > Mem_layout::Mpu_regions)
-      _size = Mem_layout::Mpu_regions;
-  }
+  {}
 
   enum class Init { Reserved_regions };
 
