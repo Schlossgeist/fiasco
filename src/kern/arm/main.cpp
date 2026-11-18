@@ -60,13 +60,20 @@ IMPLEMENTATION[arm && mp && mpu]:
 
 static void init_ap_cpu_mpu()
 {
+  extern Mword _tramp_mp_startup_prbar2;
+  extern Mword _tramp_mp_startup_prlar2;
+
   Mpu::init();
   // No thread context yet, the CPU starts multiplexing with its first
   // Mpu::update(). Only the kernel image is accessible so far (see
-  // tramp-mp.S) but newer region versions live on the kernel heap.
-  // sync_early() writes in ascending order and the well-known regions up to
-  // and including the heap region are never changed after boot, i.e. have no
-  // deltas: the heap region is loaded before any delta is accessed.
+  // tramp-mp.S) but newer region versions (deltas) live on the kernel heap,
+  // even those of well-known regions (see Kip_init::map_kip()). Load the heap
+  // region first from the copy in the kernel image provided by
+  // Kernel_thread::boot_app_cpus(), then sync_early() can access any delta.
+  Mpu_region_base heap;
+  heap.prbar = _tramp_mp_startup_prbar2;
+  heap.prlar = _tramp_mp_startup_prlar2;
+  Mpu::write_early(Kpdir::Kernel_heap, heap);
   Mpu::sync_early(*Kmem::kdir, Kmem::kdir->used(), true);
   Cpu::init_sctlr();
 }

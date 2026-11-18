@@ -117,6 +117,7 @@ public:
 
   int lookup(Mword addr) const;
   int free_phys() const;
+  int pick_victim() const;
   void activate(unsigned i, unsigned p);
   void deactivate(unsigned i);
 
@@ -257,6 +258,13 @@ private:
 public:
   // MULTIPLEXING
   /**
+   * Check whether a fault at `address` hit a region that is part of the
+   * active snapshot but currently not in a physical MPU slot. If so, swap it
+   * in (random replacement) and return true.
+   */
+  static bool check_and_handle_multiplex_fault(Mword address);
+
+  /**
    * Get the physical slots of the ku_mem regions of `regions`, i.e. its
    * disabled user regions.
    *
@@ -326,7 +334,7 @@ private:
   static Snapshot &switch_snapshot(Mpu_regions const &regions,
                                    bool *reused = nullptr);
 
-  /// Find a free physical slot for logical region `i`.
+  /// Find a physical slot for logical region `i`, evicting one if needed.
   static unsigned place(Snapshot &s, unsigned i);
 };
 
@@ -594,7 +602,9 @@ private:
 IMPLEMENTATION [mpu && mpultiplex]:
 
 #include <cstdio>
+#include <cstdlib>
 
+#include "context.h"
 #include "kmem_alloc.h"
 #include "kmem_slab.h"
 #include "lock_guard.h"
@@ -1019,6 +1029,26 @@ Snapshot::free_phys() const
   return p && p <= _hw ? static_cast<int>(p - 1) : -1;
 }
 
+/**
+ * Pick a random active, non-pinned logical region.
+ *
+ * \return Logical slot or -1 if all active regions are pinned.
+ */
+IMPLEMENT
+int
+Snapshot::pick_victim() const
+{
+  Phys_mask cand = _phys_used & ~_phys_pinned;
+  unsigned n = cand.popcount();
+  if (!n)
+    return -1;
+
+  size_t p = cand.ffs(0);
+  for (unsigned k = rand() % n; k; --k)
+    p = cand.ffs(p);
+  return _logical[p - 1];
+}
+
 IMPLEMENT
 void
 Snapshot::activate(unsigned i, unsigned p)
@@ -1125,9 +1155,6 @@ Mpu::active()
  * Find a physical slot for the (inactive) logical region `i` and mark it
  * active. Reserved regions prefer their identity slot because the kernel
  * entry code relies on fixed slots for some of them.
- *
- * Regions are not evicted (yet): all used regions must fit into the hardware
- * regions.
  */
 IMPLEMENT static
 unsigned
@@ -1137,15 +1164,27 @@ Mpu::place(Snapshot &s, unsigned i)
   if (s.reserved(i) && i < s.hw_count())
     {
       p = i;
+      // evict whatever lives in the identity slot
       if (int l = s.logical_slot(p); l >= 0)
-        panic("MPUltiplex: identity slot %d of L%u taken by L%d\n", p, i, l);
+        {
+          if (s.pinned(l))
+            panic("MPUltiplex: identity slot %d of L%u taken by pinned "
+                  "L%d\n", p, i, l);
+          s.deactivate(l);
+        }
     }
 
   if (p < 0)
     p = s.free_phys();
 
   if (p < 0)
-    panic("MPUltiplex: all %u hardware regions in use\n", s.hw_count());
+    {
+      int victim = s.pick_victim();
+      if (victim < 0)
+        panic("MPUltiplex: all %u hardware regions pinned\n", s.hw_count());
+      p = s.phys_slot(victim);
+      s.deactivate(victim);
+    }
 
   s.activate(i, p);
   return p;
@@ -1177,16 +1216,41 @@ Mpu::prepare_update(Mpu_regions const &regions)
         s.deactivate(l);
     }
 
-  // Pinned regions first, they may need their identity slot.
+  // Pinned regions first, they may evict others.
   for (unsigned l = 0; l < s.size(); ++l)
     if (s.used(l) && s.pinned(l) && !s.active(l))
       place(s, l);
 
+  // Fill remaining free slots, but do not evict.
   for (unsigned l = 0; l < s.size(); ++l)
     if (s.used(l) && !s.active(l))
-      place(s, l);
+      {
+        int p = s.free_phys();
+        if (p < 0)
+          break;
+        s.activate(l, p);
+      }
 
   return s;
+}
+
+IMPLEMENT static
+bool
+Mpu::check_and_handle_multiplex_fault(Mword address)
+{
+  auto guard = lock_guard(cpu_lock);
+  Snapshot *a = active();
+  if (!a)
+    return false;
+
+  Snapshot &s = *a;
+  int l = s.lookup(address);
+  if (l < 0 || s.active(l))
+    return false; // not a multiplexing fault
+
+  direct_write(place(s, l), s.version(l), false);
+  hw_done();
+  return true;
 }
 
 IMPLEMENT static inline NEEDS[Mpu::active]

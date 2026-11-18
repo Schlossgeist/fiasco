@@ -80,6 +80,8 @@ EXTENSION class Kernel_thread
     Mword mair;
     Mword prbar0;
     Mword prlar0;
+    Mword prbar2; ///< Kernel heap region, see init_ap_cpu_mpu()
+    Mword prlar2;
   };
 };
 
@@ -97,6 +99,8 @@ Kernel_thread::boot_app_cpus()
   auto const& kd = *Kmem::kdir;
   _tmp->prbar0 = kd[Kpdir::Kernel_text].prbar;
   _tmp->prlar0 = kd[Kpdir::Kernel_text].prlar;
+  _tmp->prbar2 = kd[Kpdir::Kernel_heap].prbar;
+  _tmp->prlar2 = kd[Kpdir::Kernel_heap].prlar;
 
   asm volatile ("dsb sy" : : : "memory");
   Mem_unit::clean_dcache(_tmp, _tmp + 1);

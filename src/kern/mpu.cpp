@@ -291,12 +291,23 @@ public:
    * of a CPU).
    *
    * Newer region versions (deltas) live on the kernel heap. A CPU that has
-   * not loaded the heap region yet relies on the ascending order: the heap
-   * region and all regions before it must not have deltas.
+   * not loaded the heap region yet must do so with `write_early()` first.
+   * Even well-known regions may have deltas, e.g. `Kip_init::map_kip()`
+   * changes the kernel text and KIP regions after multiplexing started.
    */
   static void sync_early(Mpu_regions const &regions,
                          Mpu_regions_mask const &touched,
                          bool inplace = false);
+
+  /**
+   * Write the single region `r` into physical slot `slot` before
+   * multiplexing started on this CPU, see `sync_early()`.
+   *
+   * \param slot  The slot to update.
+   * \param r     The region to write. Must not be a region version on the
+   *              kernel heap unless the heap is already accessible.
+   */
+  static void write_early(unsigned slot, Mpu_region_base const &r);
 
   /**
    * Update MPU with new regions list.
@@ -672,6 +683,9 @@ public:
   { return logical; }
 
   static void drop_cached(Mpu_regions const &) {}
+
+  static bool check_and_handle_multiplex_fault(Mword)
+  { return false; }
 };
 
 //---------------------------------------------------------------------------
@@ -703,6 +717,14 @@ Mpu::sync_early(Mpu_regions const &regions, Mpu_regions_mask const &touched,
   while (i < touched.size() && (i = touched.ffs(i)))
     direct_write(i - 1, regions[i - 1], inplace);
 
+  hw_done();
+}
+
+IMPLEMENT static
+void
+Mpu::write_early(unsigned slot, Mpu_region_base const &r)
+{
+  direct_write(slot, r, false);
   hw_done();
 }
 

@@ -316,6 +316,9 @@ defvar _tramp_mp_startup_sctlr
 defvar _tramp_mp_startup_mair
 defvar _tramp_mp_startup_prbar0
 defvar _tramp_mp_startup_prlar0
+// Not used here, see init_ap_cpu_mpu().
+defvar _tramp_mp_startup_prbar2
+defvar _tramp_mp_startup_prlar2
 #endif
 
 .8byte 0
